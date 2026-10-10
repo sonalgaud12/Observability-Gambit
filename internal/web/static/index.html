@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability Gambit</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d36; --text: #e6edf3; --muted: #8b949e;
+    --light-sq: #d9d4c7; --dark-sq: #7a8b6f; --accent: #58a6ff;
+    --best: #3fb950; --good: #8fbc8f; --inaccuracy: #e3b341; --mistake: #f0883e; --blunder: #f85149;
+    --risk: #58a6ff; --risk2: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  select, button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; cursor: pointer; }
+  button:hover, select:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .mock { background: #5a1e1e; color: #ffb3ad; }
+  main { display: grid; grid-template-columns: minmax(280px, 560px) 1fr; gap: 24px; padding: 20px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  #board { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; width: 100%; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 30px #0008; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; font-size: min(5.6vw, 54px); user-select: none; }
+  .sq.l { background: var(--light-sq); } .sq.d { background: var(--dark-sq); }
+  .sq.last::after { content: ""; position: absolute; inset: 0; background: #f7e36a66; }
+  .sq.best::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--best); border-radius: 4px; z-index: 2; }
+  .sq.blunder::after { background: #f8514988; }
+  .pc { position: relative; z-index: 1; line-height: 1; }
+  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
+  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
+  .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
+  .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .controls .ply { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .movehead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .san { font-size: 34px; font-weight: 700; }
+  .who { color: var(--muted); }
+  .cls { font-size: 13px; padding: 3px 10px; border-radius: 999px; font-weight: 700; text-transform: uppercase; color: #0b1220; }
+  .meters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 16px 0; }
+  .meter label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; margin-bottom: 6px; }
+  .bar { position: relative; height: 12px; background: #0b0f14; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); }
+  .bar i { position: absolute; inset: 0 auto 0 0; background: var(--risk); transition: width .25s; }
+  .bar b { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--text); opacity: .7; }
+  .meter .val { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; }
+  .meter.alert .val { color: var(--blunder); }
+  .meter.alert .bar i { background: var(--blunder); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+  .chip { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .chip b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+  .chip.hot { border-color: var(--mistake); color: var(--mistake); }
+  .reasoning { white-space: pre-wrap; background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 180px; overflow: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; }
+  .incoming { margin-top: 14px; padding: 12px; border-radius: 8px; border: 1px dashed var(--line); }
+  .incoming.alert { border-color: var(--blunder); background: #f851491a; }
+  .muted { color: var(--muted); }
+  section.timeline { padding: 0 24px 28px; }
+  #tl { width: 100%; height: 190px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  #tl text { fill: var(--muted); font-size: 11px; }
+  .legend { display: flex; gap: 16px; color: var(--muted); font-size: 13px; margin: 8px 2px 0; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; background: currentColor; }
+  a.trace { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.trace:hover { text-decoration: underline; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Observability Gambit <span>· can traces see the blunder coming?</span></h1>
+  <select id="gamePick" aria-label="Game"></select>
+  <span id="mockBadge" class="badge mock" hidden>Mock data · not a result</span>
+  <span class="muted" style="margin-left:auto;font-size:13px"><kbd>←</kbd><kbd>→</kbd> step · <kbd>space</kbd> play · <kbd>b</kbd> next blunder</span>
+</header>
+
+<main>
+  <div>
+    <div id="board" aria-label="Chess board"></div>
+    <div class="controls">
+      <button id="first" title="Start">⏮</button>
+      <button id="prev" title="Back">◀</button>
+      <button id="play" class="primary" title="Play">▶ Play</button>
+      <button id="next" title="Forward">▶</button>
+      <button id="nextBlunder">Next blunder</button>
+      <select id="speed" aria-label="Speed">
+        <option value="1600">Slow</option><option value="900" selected>Normal</option><option value="350">Fast</option>
+      </select>
+      <span class="ply" id="plyLabel"></span>
+    </div>
+  </div>
+
+  <div class="panel" id="panel"></div>
+</main>
+
+<section class="timeline">
+  <svg id="tl" role="img" aria-label="Risk over the game"></svg>
+  <div class="legend">
+    <span style="color:var(--risk)">Forecast risk (previous traces only)</span>
+    <span style="color:var(--risk2)">At-move risk (this move's trace)</span>
+    <span style="color:var(--muted)">Alert threshold</span>
+  </div>
+</section>
+
+<script>
+const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const $ = (s) => document.querySelector(s);
+let cfg = {}, data = null, idx = 0, timer = null, flip = false;
+
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+async function init() {
+  cfg = await (await fetch("api/config")).json();
+  if (cfg.mock) $("#mockBadge").hidden = false;
+  const games = await (await fetch("api/games")).json();
+  const pick = $("#gamePick");
+  for (const g of games) {
+    const o = document.createElement("option");
+    o.value = g.game_id;
+    const worst = g.worst_move ? ` · worst: ${g.worst_at}. ${g.worst_move}` : "";
+    o.textContent = `${g.game_id} · ${g.model} as ${g.agent_color} · ${g.result}${worst}`;
+    pick.appendChild(o);
+  }
+  pick.onchange = () => load(pick.value, 0);
+  const q = new URLSearchParams(location.search);
+  const start = q.get("game") || (games[0] && games[0].game_id);
+  if (start) { pick.value = start; await load(start, Number(q.get("ply") || 0)); }
+}
+
+async function load(id, ply) {
+  stop();
+  data = await (await fetch("api/game?id=" + encodeURIComponent(id))).json();
+  flip = data.game.agent_color === "black";
+  idx = Math.min(ply, data.plies.length);
+  render();
+}
+
+function fenAt(i) { return i === 0 ? data.start_fen : data.plies[i - 1].fen_after; }
+
+function renderBoard() {
+  const rows = fenAt(idx).split(" ")[0].split("/");
+  const cur = idx > 0 ? data.plies[idx - 1] : null;
+  const hl = cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [];
+  const isBlunder = cur && cur.agent && cur.agent.class === "blunder";
+  // Show the engine's preferred move on the board when the agent went wrong.
+  let bestSq = [];
+  if (cur && cur.agent && ["mistake", "blunder"].includes(cur.agent.class) && cur.agent.best_move) {
+    bestSq = sanTargets(cur.agent.best_move);
+  }
+  const html = [];
+  for (let vr = 0; vr < 8; vr++) {
+    const r = flip ? 7 - vr : vr;
+    const cells = expand(rows[r]);
+    for (let vf = 0; vf < 8; vf++) {
+      const f = flip ? 7 - vf : vf;
+      const sq = "abcdefgh"[f] + (8 - r);
+      const c = cells[f];
+      const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
+      if (hl.includes(sq)) cls.push("last"), isBlunder && cls.push("blunder");
+      if (bestSq.includes(sq)) cls.push("best");
+      let inner = "";
+      if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
+      if (c !== ".") {
+        const white = c === c.toUpperCase();
+        inner += `<span class="pc ${white ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      }
+      html.push(`<div class="${cls.join(" ")}" title="${sq}">${inner}</div>`);
+    }
+  }
+  $("#board").innerHTML = html.join("");
+}
+
+function expand(row) { let out = []; for (const ch of row) { if (/\d/.test(ch)) out.push(...".".repeat(+ch)); else out.push(ch); } return out; }
+function sanTargets(san) { const m = san.match(/([a-h][1-8])(?!.*[a-h][1-8])/); return m ? [m[1]] : []; }
+
+function riskMeter(label, name, val) {
+  const m = cfg.models && cfg.models[name];
+  if (val == null || !m) return `<div class="meter"><label>${label}</label><div class="muted">run <code>gambit analyze</code></div></div>`;
+  const alert = val >= m.threshold;
+  return `<div class="meter ${alert ? "alert" : ""}"><label>${label}</label>
+    <div class="bar"><i style="width:${(val * 100).toFixed(1)}%"></i><b style="left:${(m.threshold * 100).toFixed(1)}%"></b></div>
+    <div class="val">${(val * 100).toFixed(0)}%${alert ? " · alert" : ""}</div></div>`;
+}
+
+function traceLink(id) {
+  if (!cfg.trace_url || !id) return "";
+  return `<a class="trace" target="_blank" rel="noopener" href="${esc(cfg.trace_url.replace("{trace_id}", id))}">Open trace ↗</a>`;
+}
+
+function nextAgentPly(from) { for (let i = from; i < data.plies.length; i++) if (data.plies[i].by_agent) return data.plies[i]; return null; }
+
+function renderPanel() {
+  const p = $("#panel");
+  const cur = idx > 0 ? data.plies[idx - 1] : null;
+  const g = data.game;
+  let html = "";
+  if (!cur) {
+    html += `<div class="movehead"><div class="san">Start</div><div class="who">${esc(g.model)} plays ${esc(g.agent_color)} vs Stockfish${g.opponent_elo ? " (" + g.opponent_elo + ")" : ""}</div></div>
+             <p class="muted">Final result ${esc(g.result)} by ${esc(g.method)} after ${g.plies} plies · ${g.blunders} blunders, ${g.mistakes} mistakes.</p>`;
+  } else if (cur.agent) {
+    const a = cur.agent;
+    html += `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${esc(a.san)}</div>
+      <span class="cls" style="background:${CLASS_COLOR[a.class]}">${a.class}</span>
+      <span class="who">agent · ${esc(a.model)}</span><span style="margin-left:auto">${traceLink(a.trace_id)}</span></div>`;
+    if (["mistake", "blunder", "inaccuracy"].includes(a.class)) {
+      html += `<p class="muted" style="margin:6px 0 0">Engine preferred <b style="color:var(--text)">${esc(a.best_move)}</b> · win chance dropped ${(a.win_chance_drop * 50).toFixed(0)} points · eval ${fmtCP(a.eval_before_cp)} → ${fmtCP(a.eval_after_cp)}</p>`;
+    }
+    html += `<div class="meters">${riskMeter("Forecast (before it was asked)", "forecast", a.risk && a.risk.forecast)}${riskMeter("At-move (before it was played)", "at_move", a.risk && a.risk.at_move)}</div>`;
+    const chip = (k, v, hot) => `<span class="chip ${hot ? "hot" : ""}"><b>${k}</b>${v}</span>`;
+    html += `<div class="chips">
+      ${chip("latency", (a.latency_ms / 1000).toFixed(2) + "s")}
+      ${chip("chat calls", a.chat_calls, a.chat_calls > 1)}
+      ${chip("in tok", a.input_tokens)}${chip("out tok", a.output_tokens)}
+      ${a.reasoning_tokens ? chip("reasoning tok", a.reasoning_tokens) : ""}
+      ${chip("tool calls", a.tool_calls)}
+      ${chip("illegal tries", a.illegal_attempts, a.illegal_attempts > 0)}
+      ${a.finish_length ? chip("finish", "length", true) : ""}
+      ${a.fallback ? chip("fallback", "random move", true) : ""}
+      ${chip("legal moves", a.legal_move_count)}</div>`;
+    if (a.reasoning) html += `<div class="reasoning">${esc(a.reasoning)}</div>`;
+  } else {
+    html += `<div class="movehead"><div class="san">${Math.ceil(cur.ply / 2)}${cur.ply % 2 === 0 ? "…" : "."} ${esc(cur.san)}</div><span class="who">Stockfish</span></div>`;
+  }
+  // The "before move 23" moment: risk for the agent's NEXT move, known now.
+  const nxt = nextAgentPly(idx);
+  if (nxt && nxt.agent && nxt.agent.risk && cfg.models && cfg.models.forecast) {
+    const r = nxt.agent.risk.forecast, th = cfg.models.forecast.threshold, alert = r >= th;
+    html += `<div class="incoming ${alert ? "alert" : ""}"><b>Incoming: agent's move ${nxt.agent.move_number}</b>
+      <span class="muted"> · forecast from previous traces only</span>
+      <div style="font-size:20px;font-weight:700;margin-top:4px;color:${alert ? "var(--blunder)" : "var(--text)"}">${(r * 100).toFixed(0)}% risk${alert ? " · warning before it is requested" : ""}</div></div>`;
+  }
+  p.innerHTML = html;
+}
+
+function fmtCP(cp) { if (Math.abs(cp) >= 9000) return (cp > 0 ? "+M" : "-M"); return (cp >= 0 ? "+" : "") + (cp / 100).toFixed(1); }
+
+function renderTimeline() {
+  const svg = $("#tl"), W = svg.clientWidth || 900, H = 190, L = 40, R = 14, T = 14, B = 44;
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const ag = data.plies.filter(p => p.by_agent).map(p => p.agent);
+  if (!ag.length) { svg.innerHTML = ""; return; }
+  const maxN = Math.max(...ag.map(a => a.move_number), 2), minN = Math.min(...ag.map(a => a.move_number));
+  const x = n => L + (W - L - R) * (n - minN) / Math.max(1, maxN - minN);
+  const y = v => T + (H - T - B) * (1 - v);
+  let s = "";
+  for (const v of [0, .25, .5, .75, 1]) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="6" y="${y(v) + 4}">${v * 100}%</text>`;
+  const line = (name, color, dash) => {
+    if (!ag[0].risk || ag[0].risk[name] == null) return "";
+    return `<polyline fill="none" stroke="${color}" stroke-width="2.2" ${dash ? 'stroke-dasharray="5 4"' : ""} points="${ag.map(a => x(a.move_number) + "," + y(a.risk[name])).join(" ")}"/>`;
+  };
+  if (cfg.models && cfg.models.forecast) s += `<line x1="${L}" x2="${W - R}" y1="${y(cfg.models.forecast.threshold)}" y2="${y(cfg.models.forecast.threshold)}" stroke="var(--muted)" stroke-dasharray="2 4"/>`;
+  s += line("at_move", "var(--risk2)", true) + line("forecast", "var(--risk)", false);
+  for (const a of ag) {
+    const big = a.class === "blunder" || a.class === "mistake";
+    s += `<circle cx="${x(a.move_number)}" cy="${H - B + 16}" r="${big ? 6 : 3.5}" fill="${CLASS_COLOR[a.class]}" style="cursor:pointer" data-ply="${a.ply}"><title>${a.move_number}. ${esc(a.san)} · ${a.class}</title></circle>`;
+  }
+  const step = Math.max(1, Math.ceil((maxN - minN) / 15));
+  for (let n = minN; n <= maxN; n += step) s += `<text x="${x(n) - 6}" y="${H - 6}">${n}</text>`;
+  const curPly = idx > 0 ? data.plies[idx - 1].ply : 0;
+  const nearest = ag.filter(a => a.ply <= curPly).pop();
+  if (nearest) s += `<line x1="${x(nearest.move_number)}" x2="${x(nearest.move_number)}" y1="${T}" y2="${H - B + 24}" stroke="var(--text)" stroke-width="1.5" opacity=".8"/>`;
+  svg.innerHTML = s;
+  svg.querySelectorAll("circle[data-ply]").forEach(c => c.onclick = () => { stop(); idx = +c.dataset.ply; render(); });
+}
+
+function render() {
+  renderBoard(); renderPanel(); renderTimeline();
+  $("#plyLabel").textContent = `ply ${idx} / ${data.plies.length}`;
+  const u = new URL(location); u.searchParams.set("game", data.game.game_id); u.searchParams.set("ply", idx); history.replaceState(null, "", u);
+}
+
+function go(n) { idx = Math.max(0, Math.min(data.plies.length, n)); render(); }
+function stop() { if (timer) clearInterval(timer); timer = null; $("#play").textContent = "▶ Play"; }
+function play() {
+  if (timer) return stop();
+  $("#play").textContent = "⏸ Pause";
+  timer = setInterval(() => {
+    if (idx >= data.plies.length) return stop();
+    go(idx + 1);
+    const cur = data.plies[idx - 1];
+    if (cur.agent && cur.agent.class === "blunder") stop(); // let the moment land
+  }, +$("#speed").value);
+}
+function nextBlunder() {
+  stop();
+  for (let i = idx; i < data.plies.length; i++) {
+    const a = data.plies[i].agent;
+    if (a && a.class === "blunder") return go(i + 1);
+  }
+}
+
+$("#first").onclick = () => { stop(); go(0); };
+$("#prev").onclick = () => { stop(); go(idx - 1); };
+$("#next").onclick = () => { stop(); go(idx + 1); };
+$("#play").onclick = play;
+$("#nextBlunder").onclick = nextBlunder;
+window.addEventListener("resize", () => data && renderTimeline());
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "SELECT") return;
+  if (e.key === "ArrowRight") { stop(); go(idx + 1); }
+  else if (e.key === "ArrowLeft") { stop(); go(idx - 1); }
+  else if (e.key === " ") { e.preventDefault(); play(); }
+  else if (e.key === "b") nextBlunder();
+});
+init();
+</script>
+</body>
+</html>

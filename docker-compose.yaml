@@ -1,0 +1,103 @@
+# The Observability Gambit: local, vendor-neutral backend stack.
+#
+#   make up        start Collector, Jaeger, ClickHouse, Prometheus, Grafana
+#   make rehearse  play mock games into it (no API key needed)
+#
+# UIs:  Grafana http://localhost:3000 · Jaeger http://localhost:16686 · Prometheus http://localhost:9090
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    user: "0:0" # lets the file exporter write into ./data on the host
+    volumes:
+      - ./collector/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./data:/data
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics from spanmetrics
+      - "13133:13133" # health check
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+
+  jaeger:
+    image: jaegertracing/jaeger:2.5.0
+    ports:
+      - "16686:16686"
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1" # passwordless default user, local demo only
+    ports:
+      - "8123:8123" # HTTP (clickhouse client / curl)
+      - "9000:9000" # native
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+      - ./deploy/clickhouse/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8123/ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_INSTALL_PLUGINS: grafana-clickhouse-datasource
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/gambit.json
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus, jaeger, clickhouse]
+
+  # Replays recorded traces from ./data/replay into the Collector (make replay).
+  replay:
+    image: otel/opentelemetry-collector-contrib:0.120.0
+    profiles: ["replay"]
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./collector/replay.yaml:/etc/otelcol-contrib/config.yaml:ro
+      - ./data:/data:ro
+    depends_on: [otel-collector]
+
+  # Optional: run the agent in a container (Stockfish included).
+  #   docker compose --profile agent run --rm agent play --mock --games 20
+  agent:
+    build: .
+    profiles: ["agent"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GAMBIT_BASE_URL: ${GAMBIT_BASE_URL:-https://api.openai.com/v1}
+      GAMBIT_MODEL: ${GAMBIT_MODEL:-gpt-4o-mini}
+      GAMBIT_PROVIDER: ${GAMBIT_PROVIDER:-openai}
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+    depends_on: [otel-collector]
+
+volumes:
+  clickhouse:

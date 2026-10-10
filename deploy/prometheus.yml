@@ -1,0 +1,8 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: otel-collector-spanmetrics
+    scrape_protocols: [OpenMetricsText1.0.0, PrometheusText0.0.4] # OpenMetrics carries exemplars
+    static_configs:
+      - targets: ["otel-collector:8889"]

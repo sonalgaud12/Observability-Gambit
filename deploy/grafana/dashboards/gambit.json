@@ -1,0 +1,443 @@
+{
+  "title": "Observability Gambit",
+  "uid": "gambit",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "10s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "tags": [
+    "opentelemetry",
+    "gen_ai",
+    "chess"
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "title": "Agent moves graded",
+      "type": "stat",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(gambit_calls_total{span_name=\"chess.move\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "A",
+          "exemplar": false,
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "One chess.move trace per agent move.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 2,
+      "title": "Blunder rate",
+      "type": "stat",
+      "gridPos": {
+        "x": 6,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(gambit_calls_total{span_name=\"chess.move\",chess_move_class=\"blunder\"}[$__range])) / sum(increase(gambit_calls_total{span_name=\"chess.move\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "A",
+          "exemplar": false,
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Share of agent moves the engine graded as blunders (spanmetrics on the chess.move root span).",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 3,
+      "title": "Illegal-move retries",
+      "type": "stat",
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(gambit_calls_total{span_name=\"chess.validate_move\",status_code=\"STATUS_CODE_ERROR\"}[$__range])) / sum(increase(gambit_calls_total{span_name=\"chess.validate_move\"}[$__range]))",
+          "legendFormat": "",
+          "refId": "A",
+          "exemplar": false,
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "Share of model answers that were illegal or unreadable.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 4,
+      "title": "p95 decision latency",
+      "type": "stat",
+      "gridPos": {
+        "x": 18,
+        "y": 0,
+        "w": 6,
+        "h": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(gambit_duration_milliseconds_bucket{span_name=~\"invoke_agent.*\"}[$__range])))",
+          "legendFormat": "",
+          "refId": "A",
+          "exemplar": false,
+          "instant": true,
+          "range": false
+        }
+      ],
+      "description": "invoke_agent span: the whole decision, including retries and tool calls, excluding grading.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 5,
+      "title": "Move quality over time",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (chess_move_class) (rate(gambit_calls_total{span_name=\"chess.move\"}[$__rate_interval])) * 60",
+          "legendFormat": "{{chess_move_class}}",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "description": "Agent moves per minute by engine class.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": {
+              "mode": "normal"
+            },
+            "fillOpacity": 80,
+            "lineWidth": 0
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "best"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "good"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8fbc8f"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "inaccuracy"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "yellow"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "mistake"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "blunder"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {}
+    },
+    {
+      "id": 6,
+      "title": "Decision latency (click a dot for the trace)",
+      "type": "timeseries",
+      "gridPos": {
+        "x": 12,
+        "y": 4,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le, gen_ai_request_model) (rate(gambit_duration_milliseconds_bucket{span_name=~\"invoke_agent.*\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{gen_ai_request_model}}",
+          "refId": "A",
+          "exemplar": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, gen_ai_request_model) (rate(gambit_duration_milliseconds_bucket{span_name=~\"invoke_agent.*\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{gen_ai_request_model}}",
+          "refId": "B",
+          "exemplar": false
+        }
+      ],
+      "description": "Exemplars link each bucket to a real trace in Jaeger. Note the gap: invoke_agent ends before the grade exists, so its metrics cannot be split by move class.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 7,
+      "title": "Blunder rate by decision-latency decile",
+      "type": "barchart",
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "WITH\n  m AS (SELECT TraceId, SpanAttributes['chess.move.class'] AS cls FROM otel.otel_traces\n        WHERE SpanName = 'chess.move' AND $__timeFilter(Timestamp)),\n  d AS (SELECT TraceId, Duration / 1e6 AS ms FROM otel.otel_traces\n        WHERE SpanName LIKE 'invoke_agent%' AND $__timeFilter(Timestamp))\nSELECT concat('D', toString(decile + 1)) AS latency_decile,\n       round(avg(cls = 'blunder') * 100, 1) AS blunder_pct\nFROM (\n  SELECT m.cls, intDiv((row_number() OVER (ORDER BY d.ms) - 1) * 10, count() OVER ()) AS decile\n  FROM m INNER JOIN d USING (TraceId)\n)\nGROUP BY decile ORDER BY decile",
+          "format": 1,
+          "queryType": "table",
+          "editorType": "sql",
+          "refId": "A"
+        }
+      ],
+      "description": "The correlation question in one SQL query: join the label (root span) to the decision span by TraceId. D1 = fastest 10% of decisions.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "red"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "xField": "latency_decile",
+        "orientation": "vertical"
+      }
+    },
+    {
+      "id": 8,
+      "title": "Recent blunders",
+      "type": "table",
+      "gridPos": {
+        "x": 12,
+        "y": 12,
+        "w": 12,
+        "h": 9
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-clickhouse-datasource",
+            "uid": "clickhouse"
+          },
+          "rawSql": "SELECT Timestamp AS time,\n       SpanAttributes['chess.game.id'] AS game,\n       toUInt32OrZero(SpanAttributes['chess.move.number']) AS move,\n       SpanAttributes['chess.move.san'] AS played,\n       SpanAttributes['chess.eval.best_move'] AS best,\n       round(toFloat64OrZero(SpanAttributes['chess.eval.win_chance_drop']) * 50) AS win_pts_lost,\n       toUInt32OrZero(SpanAttributes['chess.illegal_attempts']) AS illegal_tries,\n       TraceId AS trace\nFROM otel.otel_traces\nWHERE SpanName = 'chess.move' AND SpanAttributes['chess.move.class'] = 'blunder' AND $__timeFilter(Timestamp)\nORDER BY Timestamp DESC LIMIT 50",
+          "format": 1,
+          "queryType": "table",
+          "editorType": "sql",
+          "refId": "A"
+        }
+      ],
+      "description": "Straight from ClickHouse (all traces, unsampled). Click a trace ID to open it in Jaeger.",
+      "datasource": {
+        "type": "grafana-clickhouse-datasource",
+        "uid": "clickhouse"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "trace"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open trace in Jaeger",
+                    "url": "http://localhost:16686/trace/${__value.raw}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {}
+    }
+  ],
+  "description": "Can OpenTelemetry traces predict when an LLM blunders? Spanmetrics from the Collector + raw spans in ClickHouse."
+}

@@ -1,0 +1,34 @@
+# Replays recorded traces into the main Collector, so the stage demo never
+# depends on a live LLM call (or conference Wi-Fi).
+#
+# Put OTLP-JSON files (e.g. a copy of data/traces/traces.jsonl, or a single
+# game filtered with `make extract-game`) into data/replay/, then:
+#   make replay
+#
+# Replayed spans keep their original timestamps and trace IDs, so links from
+# the demo UI keep working.
+
+receivers:
+  otlpjsonfile:
+    include: [/data/replay/*.jsonl]
+    start_at: beginning
+    poll_interval: 2s
+
+processors:
+  batch: {}
+
+exporters:
+  otlp:
+    endpoint: otel-collector:4317
+    tls:
+      insecure: true
+
+service:
+  telemetry:
+    metrics:
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlpjsonfile]
+      processors: [batch]
+      exporters: [otlp]
