@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Observability Gambit</title>
 <style>
+  html { scrollbar-gutter: stable; }
   :root {
     --bg: #0e1116; --panel: #161b22; --line: #262d36; --text: #e6edf3; --muted: #8b949e;
     --light-sq: #d9d4c7; --dark-sq: #7a8b6f; --accent: #58a6ff;
@@ -21,10 +22,10 @@
   button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
   .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
   .mock { background: #5a1e1e; color: #ffb3ad; }
-  main { display: grid; grid-template-columns: minmax(280px, 560px) 1fr; gap: 24px; padding: 20px 24px; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  #board { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; width: 100%; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 30px #0008; }
-  .sq { position: relative; display: flex; align-items: center; justify-content: center; font-size: min(5.6vw, 54px); user-select: none; }
+  main { display: grid; grid-template-columns: min(560px, 100%) minmax(0, 1fr); gap: 24px; padding: 20px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+  #board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); aspect-ratio: 1; width: 100%; container-type: inline-size; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 30px #0008; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; font-size: 9.5cqw; user-select: none; }
   .sq.l { background: var(--light-sq); } .sq.d { background: var(--dark-sq); }
   .sq.last::after { content: ""; position: absolute; inset: 0; background: #f7e36a66; }
   .sq.best::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--best); border-radius: 4px; z-index: 2; }
@@ -35,7 +36,7 @@
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
   .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
   .controls .ply { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
-  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; overflow-wrap: anywhere; }
   .movehead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
   .san { font-size: 34px; font-weight: 700; }
   .who { color: var(--muted); }
@@ -52,7 +53,7 @@
   .chip { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
   .chip b { color: var(--muted); font-weight: 500; margin-right: 4px; }
   .chip.hot { border-color: var(--mistake); color: var(--mistake); }
-  .reasoning { white-space: pre-wrap; background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 180px; overflow: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; }
+  .reasoning { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 180px; overflow: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; }
   .incoming { margin-top: 14px; padding: 12px; border-radius: 8px; border: 1px dashed var(--line); }
   .incoming.alert { border-color: var(--blunder); background: #f851491a; }
   .muted { color: var(--muted); }
@@ -83,6 +84,7 @@
       <button id="play" class="primary" title="Play">▶ Play</button>
       <button id="next" title="Forward">▶</button>
       <button id="nextBlunder">Next blunder</button>
+      <label class="muted"><input type="checkbox" id="pauseOnBlunder"> Pause on blunders</label>
       <select id="speed" aria-label="Speed">
         <option value="1600">Slow</option><option value="900" selected>Normal</option><option value="350">Fast</option>
       </select>
@@ -279,7 +281,7 @@ function play() {
     if (idx >= data.plies.length) return stop();
     go(idx + 1);
     const cur = data.plies[idx - 1];
-    if (cur.agent && cur.agent.class === "blunder") stop(); // let the moment land
+    if ($("#pauseOnBlunder").checked && cur.agent && cur.agent.class === "blunder") stop();
   }, +$("#speed").value);
 }
 function nextBlunder() {
@@ -295,6 +297,8 @@ $("#prev").onclick = () => { stop(); go(idx - 1); };
 $("#next").onclick = () => { stop(); go(idx + 1); };
 $("#play").onclick = play;
 $("#nextBlunder").onclick = nextBlunder;
+document.querySelectorAll("button").forEach(b => b.addEventListener("click", () => b.blur()));
+$("#speed").onchange = () => { if (timer) { stop(); play(); } };
 window.addEventListener("resize", () => data && renderTimeline());
 document.addEventListener("keydown", e => {
   if (e.target.tagName === "SELECT") return;
