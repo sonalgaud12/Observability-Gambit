@@ -1,0 +1,49 @@
+# Optional Grafana Cloud route. NOT used by default.
+#
+# Merged on top of otel-collector.yaml by docker-compose.cloud.yaml (the Collector
+# accepts several --config flags and merges them). The local pipelines are left
+# exactly as they are; this adds one more trace pipeline beside them.
+#
+# Endpoint, instance ID and token come from environment variables, see
+# .env.cloud.example. Nothing here points at a real stack.
+
+extensions:
+  basicauth/grafana:
+    client_auth:
+      username: ${env:GRAFANA_CLOUD_INSTANCE_ID}
+      password: ${env:GRAFANA_CLOUD_OTLP_TOKEN}
+
+processors:
+  # Tags so dashboards can tell runs apart, plus the opt-in for Grafana Cloud
+  # Agent Observability (conversations view).
+  resource/cloud:
+    attributes:
+      - {key: gambit.run, value: "${env:GAMBIT_RUN}", action: upsert}
+      - {key: gambit.model, value: "${env:GAMBIT_MODEL}", action: upsert}
+      - {key: agento11y.record, value: "true", action: upsert}
+
+  # Grafana Cloud intentionally strips gen_ai.input.messages and
+  # gen_ai.output.messages from stored spans (open-source Tempo keeps them).
+  # Copy them to gambit.prompt.* so the prompts stay queryable in Cloud traces.
+  transform/cloud:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - set(attributes["gambit.prompt.input"], attributes["gen_ai.input.messages"]) where attributes["gen_ai.input.messages"] != nil
+          - set(attributes["gambit.prompt.output"], attributes["gen_ai.output.messages"]) where attributes["gen_ai.output.messages"] != nil
+
+exporters:
+  otlphttp/grafana:
+    endpoint: ${env:GRAFANA_CLOUD_OTLP_ENDPOINT}
+    auth:
+      authenticator: basicauth/grafana
+
+service:
+  # Lists are replaced when configs merge, so repeat the base extension.
+  extensions: [health_check, basicauth/grafana]
+  pipelines:
+    traces/cloud:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/cloud, transform/cloud, batch]
+      exporters: [otlphttp/grafana]

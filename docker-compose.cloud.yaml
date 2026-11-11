@@ -1,0 +1,21 @@
+# Optional: also send traces to Grafana Cloud. See "Send to Grafana Cloud" in the README.
+#
+#   make up-cloud      (reads .env.cloud, see .env.cloud.example)
+#
+# Needs GRAFANA_CLOUD_OTLP_ENDPOINT, GRAFANA_CLOUD_INSTANCE_ID and
+# GRAFANA_CLOUD_OTLP_TOKEN. If one is missing, compose stops with an error
+# instead of starting a Collector that silently drops spans.
+
+services:
+  otel-collector:
+    command:
+      - --config=/etc/otelcol-contrib/config.yaml
+      - --config=/etc/otelcol-contrib/cloud.yaml
+    volumes:
+      - ./collector/cloud.yaml:/etc/otelcol-contrib/cloud.yaml:ro
+    environment:
+      GRAFANA_CLOUD_OTLP_ENDPOINT: ${GRAFANA_CLOUD_OTLP_ENDPOINT:?set GRAFANA_CLOUD_OTLP_ENDPOINT, e.g. https://otlp-gateway-<zone>.grafana.net/otlp}
+      GRAFANA_CLOUD_INSTANCE_ID: ${GRAFANA_CLOUD_INSTANCE_ID:?set GRAFANA_CLOUD_INSTANCE_ID}
+      GRAFANA_CLOUD_OTLP_TOKEN: ${GRAFANA_CLOUD_OTLP_TOKEN:?set GRAFANA_CLOUD_OTLP_TOKEN}
+      GAMBIT_RUN: ${GAMBIT_RUN:-local}
+      GAMBIT_MODEL: ${GAMBIT_MODEL:-unknown}

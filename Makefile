@@ -1,6 +1,7 @@
 # The Observability Gambit
 #
 #   make up          start the backend stack (Collector, Jaeger, ClickHouse, Prometheus, Grafana)
+#   make up-cloud    same, plus an optional Grafana Cloud route (README: Send to Grafana Cloud)
 #   make rehearse    50 mock games, no API key (synthetic correlations: rehearsal only)
 #   make play        real games against an OpenAI-compatible endpoint (see README)
 #   make analyze     correlation report + model -> out/
@@ -18,7 +19,7 @@ GAME       ?=
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT ?= true
 export STOCKFISH_PATH ?= $(STOCKFISH)
 
-.PHONY: build test up down logs rehearse play analyze serve replay sql clean
+.PHONY: build test up up-cloud down logs rehearse play analyze serve replay sql clean
 
 build:
 	go mod tidy
@@ -33,6 +34,12 @@ up:
 	@echo "Grafana    http://localhost:3000"
 	@echo "Jaeger     http://localhost:16686"
 	@echo "Prometheus http://localhost:9090"
+
+# Same stack plus the Grafana Cloud route. Needs .env.cloud (see .env.cloud.example).
+up-cloud:
+	@test -f .env.cloud || { echo "missing .env.cloud: copy .env.cloud.example and fill it in"; exit 1; }
+	mkdir -p data/traces data/replay out
+	docker compose --env-file .env.cloud -f docker-compose.yaml -f docker-compose.cloud.yaml up -d
 
 down:
 	docker compose down
