@@ -97,6 +97,31 @@ Useful knobs (`./bin/gambit play -h` for all):
 of roughly 500–1,500 input tokens. Run 5 games first and read the token totals
 in `data/moves.jsonl` before launching hundreds.
 
+## Send to Grafana Cloud (optional)
+
+By default nothing leaves your machine. To also send the traces to a Grafana
+Cloud stack, copy `.env.cloud.example` to `.env.cloud` (git-ignored), fill in
+the OTLP endpoint, instance ID and token, then use `make up-cloud` instead of
+`make up`. The local pipelines (ClickHouse, Jaeger, file, spanmetrics) are
+unchanged; `collector/cloud.yaml` adds one more trace pipeline beside them.
+
+It does three things on the Cloud copy only:
+
+- Copies `gen_ai.input.messages` / `gen_ai.output.messages` to
+  `gambit.prompt.input` / `gambit.prompt.output`. Grafana Cloud intentionally
+  strips the original two attributes from stored spans (open-source Tempo
+  keeps them), so this keeps the prompts queryable.
+- Sets `agento11y.record=true`, so conversations also show up in Grafana Cloud
+  Agent Observability.
+- Adds `gambit.run` and `gambit.model` resource attributes (from `GAMBIT_RUN`
+  and `GAMBIT_MODEL`, defaulting to `local` and `unknown`) so dashboards can tell
+  runs apart.
+
+If any of the three required settings is missing, `make up-cloud` stops with an
+error rather than starting a Collector that quietly drops spans. If the
+endpoint or token is wrong, the Collector logs `Exporting failed` for
+`otlphttp/grafana` (`make logs`), while the local stores keep working.
+
 ## Analysis
 
 ```bash
