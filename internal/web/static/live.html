@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability Gambit · play the agent</title>
+<style>
+  html { scrollbar-gutter: stable; }
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d36; --text: #e6edf3; --muted: #8b949e;
+    --light-sq: #d9d4c7; --dark-sq: #7a8b6f; --accent: #58a6ff;
+    --best: #3fb950; --good: #8fbc8f; --inaccuracy: #e3b341; --mistake: #f0883e; --blunder: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  select, button, input[type=text] { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; }
+  button, select { cursor: pointer; }
+  button:hover:not(:disabled), select:hover { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
+  button.danger:hover:not(:disabled) { border-color: var(--blunder); color: var(--blunder); }
+  input[type=text] { width: 14em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+  a.link { color: var(--accent); text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .mock { background: #5a1e1e; color: #ffb3ad; }
+  .muted { color: var(--muted); }
+  .spacer { margin-left: auto; }
+  main { display: grid; grid-template-columns: min(560px, 100%) minmax(0, 1fr); gap: 24px; padding: 20px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); } }
+
+  #board { position: relative; display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); aspect-ratio: 1; width: 100%; container-type: inline-size; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 30px #0008; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; font-size: 9.5cqw; user-select: none; }
+  .sq.l { background: var(--light-sq); } .sq.d { background: var(--dark-sq); }
+  .sq.mine.can { cursor: pointer; }
+  .sq.last::after { content: ""; position: absolute; inset: 0; background: #f7e36a66; }
+  .sq.sel::after { content: ""; position: absolute; inset: 0; background: #58a6ff88; }
+  .sq.target { cursor: pointer; }
+  .sq.target::before { content: ""; position: absolute; width: 28%; height: 28%; border-radius: 50%; background: #0b122055; z-index: 3; }
+  .sq.target.cap::before { width: 90%; height: 90%; background: none; border: 5px solid #0b122055; }
+  .sq.hint::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--accent); border-radius: 4px; z-index: 2; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .sq.hint::before { animation: none; } }
+  .pc { position: relative; z-index: 1; line-height: 1; }
+  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
+  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
+  .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
+  #board.locked .sq { cursor: default; }
+  #promo { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: 10px; background: #0b122088; }
+  #promo[hidden] { display: none; }
+  #promo button { font-size: 9cqw; line-height: 1; padding: 6px 14px; }
+
+  .status { margin-top: 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); min-height: 3.2em; }
+  .status .big { font-size: 20px; font-weight: 700; }
+  .status.you { border-color: var(--accent); }
+  .status.think { border-color: var(--mistake); }
+  .status.over { border-color: var(--best); }
+  .status.bad { border-color: var(--blunder); background: #f851491a; }
+  .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .controls label { display: inline-flex; gap: 6px; align-items: center; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; overflow-wrap: anywhere; }
+  .movehead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .san { font-size: 34px; font-weight: 700; }
+  .who { color: var(--muted); }
+  .cls { font-size: 13px; padding: 3px 10px; border-radius: 999px; font-weight: 700; text-transform: uppercase; color: #0b1220; }
+  .cls.pending { background: transparent; color: var(--muted); border: 1px dashed var(--line); animation: pulse 1.4s ease-in-out infinite; }
+  .clock { font-size: 40px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; height: 12px; background: #0b0f14; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); margin: 8px 0 14px; }
+  .bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); width: 0; transition: width .2s linear; }
+  .bar.warn i { background: var(--mistake); } .bar.crit i { background: var(--blunder); }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+  .chip { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .chip b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+  .chip.hot { border-color: var(--mistake); color: var(--mistake); }
+  .reasoning { white-space: pre-wrap; overflow-wrap: anywhere; background: #0b0f14; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 180px; overflow: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #c9d1d9; }
+  .callout { margin: 10px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--mistake); background: #f0883e1a; }
+  .callout.bad { border-color: var(--blunder); background: #f851491a; }
+  .traceid { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted); }
+  a.trace { color: var(--accent); text-decoration: none; font-weight: 600; }
+  a.trace:hover { text-decoration: underline; }
+  .trace.wait { color: var(--muted); font-weight: 500; }
+
+  .moves { margin-top: 18px; display: grid; grid-template-columns: 3em 1fr 1fr; gap: 2px 8px; font-size: 14px; }
+  .moves .n { color: var(--muted); text-align: right; }
+  .moves button { text-align: left; padding: 3px 8px; border-radius: 6px; border-color: transparent; background: transparent; font-variant-numeric: tabular-nums; }
+  .moves button.agent { cursor: pointer; } .moves button.human { cursor: default; }
+  .moves button.sel { border-color: var(--accent); }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+
+  #toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); max-width: min(520px, 92vw); padding: 10px 16px; border-radius: 8px; background: #3a1414; border: 1px solid var(--blunder); color: #ffd7d3; z-index: 20; }
+  #toast.info { background: #12243a; border-color: var(--accent); color: #cfe4ff; }
+  #toast[hidden] { display: none; }
+  #conn { padding: 8px 24px; background: #5a3a12; color: #ffd9a8; border-bottom: 1px solid var(--mistake); }
+  #conn[hidden] { display: none; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Observability Gambit <span>· play the agent</span></h1>
+  <span id="modelBadge" class="muted"></span>
+  <span id="mockBadge" class="badge mock" hidden>Mock model · not a result</span>
+  <a class="link spacer" href="index.html">Recorded games ▸</a>
+</header>
+<div id="conn" role="alert" hidden></div>
+
+<main>
+  <div>
+    <div id="board" aria-label="Chess board" class="locked"><div id="promo" hidden></div></div>
+    <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div class="controls">
+      <select id="color" aria-label="Your colour"><option value="white">Play white</option><option value="black">Play black</option></select>
+      <button id="newGame" class="primary">New game</button>
+      <button id="resign" class="danger" disabled>Resign</button>
+      <button id="scripted" disabled></button>
+    </div>
+    <div class="controls">
+      <label class="muted">Scripted opening <input type="text" id="script" placeholder="e4 Nf3 Bc4" aria-label="Scripted opening moves"></label>
+      <span class="muted" style="font-size:13px"><kbd>space</kbd> plays the next scripted move · <kbd>esc</kbd> deselects</span>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel" id="panel"></div>
+    <div class="moves" id="moves"></div>
+  </div>
+</main>
+<div id="toast" hidden role="alert"></div>
+
+<script>
+const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
+const EVENTS = ["game_started", "human_turn", "human_moved", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "game_over", "game_saved", "notice", "error"];
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+let cfg = {}, live = {};
+let S = fresh();
+let es = null;
+
+function fresh() {
+  return { id: null, humanColor: "white", agentColor: "black", fen: START, legal: {}, myTurn: false, sel: null, last: null,
+           plies: [], agent: {}, graded: {}, thinking: null, follow: true, picked: null, hint: null, scripted: "",
+           over: null, saved: null, error: null, timeoutMS: 0, sending: false };
+}
+
+async function init() {
+  cfg = await (await fetch("api/config")).json();
+  live = cfg.live || {};
+  if (!live.info) {
+    $("#status").innerHTML = `<div class="big">Human mode is off</div><div class="muted">Start the server with <code>gambit serve --live</code> (see the README) to play the agent.</div>`;
+    $("#newGame").disabled = true; $("#color").disabled = true; $("#script").disabled = true;
+    renderBoard(); return;
+  }
+  $("#modelBadge").textContent = `${live.info.provider} / ${live.info.model}`;
+  if (live.info.mock) $("#mockBadge").hidden = false;
+  $("#script").value = (live.info.script || []).join(" ");
+  const q = new URLSearchParams(location.search);
+  if (q.get("game")) connect(q.get("game"));
+  else { renderBoard(); render(); say("Press <b>New game</b> to start.", ""); }
+  setInterval(tick, 250);
+}
+
+// ---------- server communication ----------
+
+async function api(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  let j = {};
+  try { j = await r.json(); } catch (_) {}
+  if (!r.ok) throw Object.assign(new Error(j.error || r.statusText), { status: r.status });
+  return j;
+}
+
+async function newGame() {
+  const tokens = $("#script").value.split(/[\s,]+/).filter(Boolean);
+  $("#newGame").disabled = true;
+  try {
+    const j = await api("api/live/new", { human_color: $("#color").value, script: tokens });
+    connect(j.id);
+  } catch (e) { toast("Could not start a game: " + e.message); }
+  $("#newGame").disabled = false;
+}
+
+function connect(id) {
+  if (es) es.close();
+  S = fresh(); S.id = id;
+  const u = new URL(location); u.searchParams.set("game", id); history.replaceState(null, "", u);
+  es = new EventSource("api/live/events?id=" + encodeURIComponent(id));
+  for (const t of EVENTS) es.addEventListener(t, ev => { handle(t, JSON.parse(ev.data)); });
+  es.onopen = () => showConn("");
+  es.onerror = () => {
+    if (S.saved) return;
+    if (es.readyState === EventSource.CLOSED) showConn("The stage server closed the connection. The game is saved on the server: start a new game, or open it from Recorded games.");
+    else showConn("Connection to the stage server lost. Reconnecting…");
+  };
+  renderBoard(); render();
+}
+
+function showConn(msg) { const c = $("#conn"); c.hidden = !msg; c.textContent = msg; }
+
+// ---------- events ----------
+
+function handle(type, d) {
+  switch (type) {
+    case "game_started":
+      S.humanColor = d.human_color; S.agentColor = d.agent_color; S.fen = d.start_fen; S.timeoutMS = d.move_timeout_ms;
+      $("#color").value = d.human_color;
+      break;
+    case "human_turn":
+      S.fen = d.fen; S.legal = {}; S.sel = null; S.picked = null; S.sending = false;
+      for (const u of d.legal) (S.legal[u.slice(0, 2)] ||= []).push(u);
+      S.myTurn = true; S.scripted = d.scripted || ""; S.hint = d.scripted_uci || null; S.thinking = null;
+      break;
+    case "human_moved":
+      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "human" });
+      S.fen = d.fen_after; S.last = d.uci; S.myTurn = false; S.sel = null; S.hint = null; S.scripted = ""; S.sending = false;
+      break;
+    case "agent_thinking":
+      S.thinking = { ply: d.ply, trace_id: d.trace_id, started: d.started_ms, timeout: d.timeout_ms, chat_calls: 0, tool_calls: 0, input_tokens: 0, output_tokens: 0, illegal_attempts: 0 };
+      S.myTurn = false; S.follow = true; S.picked = null;
+      break;
+    case "agent_progress":
+      if (S.thinking && S.thinking.ply === d.ply) Object.assign(S.thinking, d);
+      break;
+    case "agent_moved":
+      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "agent" });
+      S.agent[d.ply] = d; S.fen = d.fen_after; S.last = d.uci; S.thinking = null; S.follow = true; S.picked = null;
+      break;
+    case "agent_graded":
+      if (S.agent[d.ply]) S.agent[d.ply].grade = d;
+      S.graded[d.ply] = Date.now();
+      break;
+    case "game_over": S.over = d; S.myTurn = false; S.thinking = null; S.hint = null; S.scripted = ""; break;
+    case "game_saved": S.saved = d; if (es) es.close(); showConn(""); break;
+    case "notice": toast(d.message, d.level === "info" ? "info" : ""); break;
+    case "error": S.error = d.message; S.myTurn = false; S.thinking = null; break;
+  }
+  render();
+}
+
+// ---------- board ----------
+
+function expand(row) { const out = []; for (const ch of row) { if (/\d/.test(ch)) out.push(...".".repeat(+ch)); else out.push(ch); } return out; }
+const flip = () => S.humanColor === "black";
+const isMine = (c) => c !== "." && (c === c.toUpperCase()) === (S.humanColor === "white");
+
+function renderBoard() {
+  const board = $("#board"), promo = $("#promo");
+  const rows = S.fen.split(" ")[0].split("/");
+  const lastSq = S.last ? [S.last.slice(0, 2), S.last.slice(2, 4)] : [];
+  const targets = S.sel ? (S.legal[S.sel] || []).map(u => u.slice(2, 4)) : [];
+  const hint = S.myTurn && S.hint ? [S.hint.slice(0, 2), S.hint.slice(2, 4)] : [];
+  const html = [];
+  for (let vr = 0; vr < 8; vr++) {
+    const r = flip() ? 7 - vr : vr;
+    const cells = expand(rows[r]);
+    for (let vf = 0; vf < 8; vf++) {
+      const f = flip() ? 7 - vf : vf;
+      const sq = "abcdefgh"[f] + (8 - r), c = cells[f];
+      const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
+      if (lastSq.includes(sq)) cls.push("last");
+      if (S.sel === sq) cls.push("sel");
+      if (targets.includes(sq)) cls.push("target", c !== "." ? "cap" : "x");
+      if (hint.includes(sq)) cls.push("hint");
+      if (S.myTurn && isMine(c) && S.legal[sq]) cls.push("mine", "can");
+      let inner = "";
+      if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
+      if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" role="button" aria-label="${sq}">${inner}</div>`);
+    }
+  }
+  board.classList.toggle("locked", !S.myTurn);
+  board.innerHTML = html.join("");
+  board.appendChild(promo);
+  board.querySelectorAll(".sq").forEach(el => el.onclick = () => clickSquare(el.dataset.sq));
+}
+
+function pieceAt(sq) {
+  const rows = S.fen.split(" ")[0].split("/");
+  return expand(rows[8 - +sq[1]])["abcdefgh".indexOf(sq[0])];
+}
+
+function clickSquare(sq) {
+  if (!S.myTurn || S.sending) return;
+  const piece = pieceAt(sq);
+  if (S.sel && sq !== S.sel) {
+    const moves = (S.legal[S.sel] || []).filter(u => u.slice(2, 4) === sq);
+    if (moves.length) {
+      if (moves.length > 1) return askPromotion(S.sel, sq, moves);   // four promotion choices
+      return send(moves[0]);
+    }
+  }
+  if (isMine(piece) && S.legal[sq]) { S.sel = S.sel === sq ? null : sq; }
+  else {
+    if (S.sel) toast(`That move isn't legal: ${S.sel}→${sq}.`);   // rejected in the UI, nothing is sent
+    S.sel = null;
+  }
+  renderBoard();
+}
+
+function askPromotion(from, to, moves) {
+  const p = $("#promo");
+  const white = S.humanColor === "white";
+  p.innerHTML = moves.map(u => `<button data-u="${u}" aria-label="Promote to ${u[4]}"><span class="pc ${white ? "w" : "b"}">${GLYPH[{ q: "q", r: "r", b: "b", n: "n" }[u[4]]]}</span></button>`).join("");
+  p.hidden = false;
+  p.querySelectorAll("button").forEach(b => b.onclick = (e) => { e.stopPropagation(); p.hidden = true; send(b.dataset.u); });
+}
+
+async function send(uci) {
+  S.sending = true; $("#promo").hidden = true;
+  say("Sending your move…", "");
+  try {
+    await api("api/live/move", { id: S.id, move: uci });
+    // The board updates when the server confirms with human_moved.
+  } catch (e) {
+    S.sending = false; S.sel = null;
+    toast(e.status === 422 ? "Illegal move, the server refused it: " + e.message : e.message);
+    render();
+  }
+}
+
+// ---------- panels ----------
+
+function say(html, cls) { const s = $("#status"); s.className = "status " + (cls || ""); s.innerHTML = html; }
+
+function render() {
+  renderBoard(); renderStatus(); renderPanel(); renderMoves();
+  $("#resign").disabled = !S.id || !!S.over || !!S.error;
+  const sc = $("#scripted");
+  sc.disabled = !(S.myTurn && S.scripted && !S.sending);
+  sc.textContent = S.scripted ? `▶ Play scripted move: ${S.scripted}` : "No scripted move";
+}
+
+function resultText() {
+  const r = S.over.result, hw = S.humanColor === "white";
+  if (S.over.method === "Resignation") return r === "1-0" === hw ? "The agent resigned" : "You resigned";
+  if (r === "1/2-1/2") return "Draw";
+  if (r === "*") return S.over.method === "Abandoned" ? "Game abandoned" : "Game stopped";
+  return (r === "1-0") === hw ? "You won" : "The agent won";
+}
+
+function renderStatus() {
+  if (!S.id) return;
+  if (S.error) return say(`<div class="big">Something went wrong</div><div>${esc(S.error)}</div><div class="muted">The recorded games still work: <a class="link" href="index.html">open them</a>.</div>`, "bad");
+  if (S.over) {
+    const link = S.saved && S.saved.saved ? ` · <a class="link" href="index.html?game=${encodeURIComponent(S.id)}">Replay this game with its risk timeline ▸</a>` : (S.saved ? "" : ` <span class="muted">· saving…</span>`);
+    return say(`<div class="big">${esc(resultText())}</div><div>${esc(S.over.method)} after ${S.over.plies} plies${S.saved ? ` · ${S.saved.blunders} agent blunders, ${S.saved.mistakes} mistakes` : ""}${link}</div>`, "over");
+  }
+  if (S.thinking) return say(`<div class="big">The agent is thinking…</div><div class="muted">${S.timeoutMS ? `It has ${(S.timeoutMS / 1000).toFixed(0)}s per move; after that a random legal move is played.` : "No time limit is set."}</div>`, "think");
+  if (S.myTurn) return say(`<div class="big">Your move</div><div class="muted">${S.sel ? "Pick a highlighted square." : "Click a piece, then where it goes."}</div>`, "you");
+  if (S.sending) return say(`<div class="big">Sending your move…</div>`, "");
+  return say(`<div class="big">Waiting…</div>`, "");
+}
+
+function chip(k, v, hot) { return `<span class="chip ${hot ? "hot" : ""}"><b>${k}</b>${v}</span>`; }
+
+function traceSlot(ply) {
+  const a = S.agent[ply];
+  if (!a || !cfg.trace_url) return "";
+  const delay = live.trace_delay_ms || 0;
+  const href = cfg.trace_url.replace("{trace_id}", a.trace_id);
+  const since = S.graded[ply];
+  const wait = since ? Math.max(0, since + delay - Date.now()) : delay;
+  if (!since || wait > 0) return `<span class="trace wait">Open trace · ready in ~${Math.ceil(wait / 1000)}s</span>`;
+  return `<a class="trace" target="_blank" rel="noopener" href="${esc(href)}">Open trace ↗</a>`;
+}
+
+function renderPanel() {
+  const p = $("#panel");
+  if (!S.id) { p.innerHTML = `<div class="muted">Play the agent. Every move it makes is a trace: latency, tokens, tool calls and retries, graded by Stockfish.</div>`; return; }
+  if (S.thinking) {
+    const t = S.thinking;
+    p.innerHTML = `<div class="movehead"><div class="san">Move ${Math.ceil(t.ply / 2)}${t.ply % 2 === 0 ? "…" : "."}</div><span class="who">agent · ${esc(live.info.model)}</span></div>
+      <div class="clock" id="clock">0.0s</div>
+      <div class="bar" id="bar"><i></i></div>
+      <div class="chips" id="liveChips"></div>
+      <div class="traceid">trace ${esc(t.trace_id)}</div>`;
+    tick(); return;
+  }
+  const ply = S.picked ?? lastAgentPly();
+  const a = ply && S.agent[ply];
+  if (!a) {
+    p.innerHTML = S.over || S.error ? `<div class="muted">No agent move to show.</div>` : `<div class="muted">The agent's moves appear here, with their telemetry.</div>`;
+    return;
+  }
+  const g = a.grade;
+  let h = `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${esc(a.san)}</div>
+    ${g ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
+    <span class="who">agent · ${esc(live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
+  if (a.timed_out) h += `<div class="callout bad"><b>Timed out.</b> The agent did not answer within ${(S.timeoutMS / 1000).toFixed(0)}s, so a random legal move was played. The trace is flagged <code>error.type=timeout</code>.</div>`;
+  else if (a.fallback) h += `<div class="callout"><b>Fallback move.</b> The agent never produced a legal move, so a random one was played.</div>`;
+  if (g && ["mistake", "blunder", "inaccuracy"].includes(g.class)) {
+    h += `<p class="muted" style="margin:6px 0 0">Engine preferred <b style="color:var(--text)">${esc(g.best_move)}</b> · win chance dropped ${(g.win_chance_drop * 50).toFixed(0)} points · eval ${fmtCP(g.eval_before_cp)} → ${fmtCP(g.eval_after_cp)}</p>`;
+  }
+  h += `<div class="chips">${chip("latency", (a.latency_ms / 1000).toFixed(2) + "s")}${chip("chat calls", a.chat_calls, a.chat_calls > 1)}
+    ${chip("in tok", a.input_tokens)}${chip("out tok", a.output_tokens)}${a.reasoning_tokens ? chip("reasoning tok", a.reasoning_tokens) : ""}
+    ${chip("tool calls", a.tool_calls)}${chip("illegal tries", a.illegal_attempts, a.illegal_attempts > 0)}
+    ${a.finish_length ? chip("finish", "length", true) : ""}${a.fallback && !a.timed_out ? chip("fallback", "random move", true) : ""}
+    ${chip("legal moves", a.legal_move_count)}</div>`;
+  if (a.reasoning) h += `<div class="reasoning">${esc(a.reasoning)}</div>`;
+  p.innerHTML = h;
+}
+
+function lastAgentPly() { for (let i = S.plies.length - 1; i >= 0; i--) if (S.plies[i].by === "agent") return S.plies[i].ply; return null; }
+function fmtCP(cp) { if (Math.abs(cp) >= 9000) return cp > 0 ? "+M" : "-M"; return (cp >= 0 ? "+" : "") + (cp / 100).toFixed(1); }
+
+function renderMoves() {
+  const m = $("#moves");
+  const rows = [];
+  for (let i = 0; i < S.plies.length; i += 2) {
+    const cell = (pl) => {
+      if (!pl) return "<span></span>";
+      const g = S.agent[pl.ply] && S.agent[pl.ply].grade;
+      const dot = pl.by === "agent" ? `<span class="dot" style="background:${g ? CLASS_COLOR[g.class] : "var(--muted)"}"></span>` : "";
+      const sel = pl.by === "agent" && (S.picked ?? lastAgentPly()) === pl.ply && !S.thinking ? "sel" : "";
+      return `<button class="${pl.by} ${sel}" ${pl.by === "agent" ? `data-ply="${pl.ply}"` : "tabindex=-1"}>${dot}${esc(pl.san)}</button>`;
+    };
+    rows.push(`<span class="n">${i / 2 + 1}.</span>${cell(S.plies[i])}${cell(S.plies[i + 1])}`);
+  }
+  m.innerHTML = rows.join("");
+  m.querySelectorAll("button[data-ply]").forEach(b => b.onclick = () => { S.picked = +b.dataset.ply; S.thinking ? null : render(); });
+}
+
+// The thinking clock and the trace-ready countdown tick on their own, so the
+// screen visibly moves even when the server is quiet.
+function tick() {
+  if (S.thinking) {
+    const t = S.thinking, el = Math.max(0, Date.now() - t.started);
+    const c = $("#clock");
+    if (c) {
+      c.textContent = (el / 1000).toFixed(1) + "s" + (t.timeout ? ` / ${(t.timeout / 1000).toFixed(0)}s` : "");
+      const bar = $("#bar");
+      if (t.timeout) { bar.firstElementChild.style.width = Math.min(100, 100 * el / t.timeout) + "%"; bar.className = "bar " + (el > .9 * t.timeout ? "crit" : el > .7 * t.timeout ? "warn" : ""); }
+      $("#liveChips").innerHTML = chip("chat calls so far", t.chat_calls, t.chat_calls > 1) + chip("in tok", t.input_tokens) + chip("out tok", t.output_tokens) +
+        chip("tool calls", t.tool_calls) + chip("illegal tries", t.illegal_attempts, t.illegal_attempts > 0);
+    }
+    // The server enforces the cap; if its answer is overdue, say so instead of freezing.
+    if (t.timeout && el > t.timeout + 4000) showConn(`No answer from the stage server for ${(el / 1000).toFixed(0)}s (limit ${(t.timeout / 1000).toFixed(0)}s). If this does not clear, press New game; the recorded games still work.`);
+    else if ($("#conn").textContent.startsWith("No answer")) showConn("");
+  } else if ($("#conn").textContent.startsWith("No answer")) showConn("");
+  const slot = $("#traceSlot");
+  if (slot) { const ply = S.picked ?? lastAgentPly(); if (ply) slot.innerHTML = traceSlot(ply); }
+}
+
+let toastTimer = null;
+function toast(msg, kind) {
+  const t = $("#toast"); t.textContent = msg; t.className = kind || ""; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 4500);
+}
+
+async function resign() {
+  if (!S.id || S.over) return;
+  try { await api("api/live/resign", { id: S.id }); } catch (e) { toast(e.message); }
+}
+function playScripted() { if (S.myTurn && S.scripted && !S.sending) send(S.hint || S.scripted); }
+
+$("#newGame").onclick = newGame;
+$("#resign").onclick = resign;
+$("#scripted").onclick = playScripted;
+document.addEventListener("keydown", e => {
+  if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+  if (e.key === " " || e.key === "Enter") { if (S.myTurn && S.scripted) { e.preventDefault(); playScripted(); } }
+  else if (e.key === "Escape") { S.sel = null; $("#promo").hidden = true; renderBoard(); }
+});
+init();
+</script>
+</body>
+</html>

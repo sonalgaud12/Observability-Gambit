@@ -6,6 +6,8 @@
 #   make play        real games against an OpenAI-compatible endpoint (see README)
 #   make analyze     correlation report + model -> out/
 #   make serve       stage UI on http://localhost:8080
+#   make live        same UI, plus human mode: play the agent (README: Human mode)
+#   make live-mock   human mode with the offline mock model, no API key
 #   make replay GAME=<id>   re-send one recorded game's traces into the stack
 
 GAMES      ?= 50
@@ -15,11 +17,12 @@ BASE_URL   ?= https://api.openai.com/v1
 PROVIDER   ?= openai
 STOCKFISH  ?= stockfish
 GAME       ?=
+LIVE_ARGS  ?=
 
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT ?= true
 export STOCKFISH_PATH ?= $(STOCKFISH)
 
-.PHONY: build test up up-cloud down logs rehearse play analyze serve replay sql clean
+.PHONY: build test up up-cloud down logs rehearse play analyze serve live live-mock replay sql clean
 
 build:
 	go mod tidy
@@ -59,6 +62,14 @@ analyze: build
 
 serve: build
 	./bin/gambit serve --data data --model out/model.json
+
+# Human mode: you play the agent from http://localhost:8080/live.html.
+# Extra flags go in LIVE_ARGS, e.g. LIVE_ARGS='--move-timeout 10s --script "e4 Nf3 Bc4"'.
+live: build
+	./bin/gambit serve --live --agent-model $(MODEL) --base-url $(BASE_URL) --provider $(PROVIDER) $(LIVE_ARGS)
+
+live-mock: build
+	./bin/gambit serve --live --mock $(LIVE_ARGS)
 
 # Replays a whole recording, or a single game with GAME=<id>.
 replay: build

@@ -72,6 +72,7 @@
   <h1>The Observability Gambit <span>· can traces see the blunder coming?</span></h1>
   <select id="gamePick" aria-label="Game"></select>
   <span id="mockBadge" class="badge mock" hidden>Mock data · not a result</span>
+  <a id="liveLink" href="live.html" hidden style="color:var(--accent);text-decoration:none;font-weight:600">Play the agent ▸</a>
   <span class="muted" style="margin-left:auto;font-size:13px"><kbd>←</kbd><kbd>→</kbd> step · <kbd>space</kbd> play · <kbd>b</kbd> next blunder</span>
 </header>
 
@@ -115,13 +116,14 @@ function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;"
 async function init() {
   cfg = await (await fetch("api/config")).json();
   if (cfg.mock) $("#mockBadge").hidden = false;
+  if (cfg.live) $("#liveLink").hidden = false;
   const games = await (await fetch("api/games")).json();
   const pick = $("#gamePick");
   for (const g of games) {
     const o = document.createElement("option");
     o.value = g.game_id;
     const worst = g.worst_move ? ` · worst: ${g.worst_at}. ${g.worst_move}` : "";
-    o.textContent = `${g.game_id} · ${g.model} as ${g.agent_color} · ${g.result}${worst}`;
+    o.textContent = `${g.game_id} · ${g.model} as ${g.agent_color}${g.mode === "human" ? " vs a human" : ""} · ${g.result}${worst}`;
     pick.appendChild(o);
   }
   pick.onchange = () => load(pick.value, 0);
@@ -198,7 +200,7 @@ function renderPanel() {
   const g = data.game;
   let html = "";
   if (!cur) {
-    html += `<div class="movehead"><div class="san">Start</div><div class="who">${esc(g.model)} plays ${esc(g.agent_color)} vs Stockfish${g.opponent_elo ? " (" + g.opponent_elo + ")" : ""}</div></div>
+    html += `<div class="movehead"><div class="san">Start</div><div class="who">${esc(g.model)} plays ${esc(g.agent_color)} vs ${g.mode === "human" ? "a human" : "Stockfish" + (g.opponent_elo ? " (" + g.opponent_elo + ")" : "")}</div></div>
              <p class="muted">Final result ${esc(g.result)} by ${esc(g.method)} after ${g.plies} plies · ${g.blunders} blunders, ${g.mistakes} mistakes.</p>`;
   } else if (cur.agent) {
     const a = cur.agent;
@@ -218,11 +220,12 @@ function renderPanel() {
       ${chip("tool calls", a.tool_calls)}
       ${chip("illegal tries", a.illegal_attempts, a.illegal_attempts > 0)}
       ${a.finish_length ? chip("finish", "length", true) : ""}
+      ${a.timed_out ? chip("timed out", "yes", true) : ""}
       ${a.fallback ? chip("fallback", "random move", true) : ""}
       ${chip("legal moves", a.legal_move_count)}</div>`;
     if (a.reasoning) html += `<div class="reasoning">${esc(a.reasoning)}</div>`;
   } else {
-    html += `<div class="movehead"><div class="san">${Math.ceil(cur.ply / 2)}${cur.ply % 2 === 0 ? "…" : "."} ${esc(cur.san)}</div><span class="who">Stockfish</span></div>`;
+    html += `<div class="movehead"><div class="san">${Math.ceil(cur.ply / 2)}${cur.ply % 2 === 0 ? "…" : "."} ${esc(cur.san)}</div><span class="who">${data.game.mode === "human" ? "Human" : "Stockfish"}</span></div>`;
   }
   // The "before move 23" moment: risk for the agent's NEXT move, known now.
   const nxt = nextAgentPly(idx);

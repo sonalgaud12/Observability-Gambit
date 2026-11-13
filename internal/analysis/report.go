@@ -16,10 +16,13 @@ import (
 
 // Options for an analysis run.
 type Options struct {
-	DataDir   string
-	OutDir    string
-	Label     string  // "blunder" or "mistake+"
-	Model     string  // optional: only analyse moves from this model
+	DataDir string
+	OutDir  string
+	Label   string // "blunder" or "mistake+"
+	Model   string // optional: only analyse moves from this model
+	// Mode picks which games to analyse: "engine" (the default: agent vs.
+	// Stockfish), "human" (played from the stage UI) or "all".
+	Mode      string
 	TestFrac  float64 // fraction of games held out
 	AlertRate float64 // fraction of moves the alert threshold flags
 	L2        float64
@@ -102,6 +105,13 @@ func build(games map[string][]dataset.MoveRecord, ids []string, feats []Feature,
 	return s
 }
 
+func modeName(m string) string {
+	if m == "" {
+		return "engine"
+	}
+	return m
+}
+
 // Run executes the analysis and writes report.md and model.json.
 func Run(o Options) (*Bundle, string, error) {
 	recs, err := dataset.LoadMoves(o.DataDir)
@@ -117,8 +127,23 @@ func Run(o Options) (*Bundle, string, error) {
 		}
 		recs = f
 	}
+	switch o.Mode {
+	case "", "engine", "human", "all":
+	default:
+		return nil, "", fmt.Errorf("unknown mode %q: use engine, human or all", o.Mode)
+	}
+	if o.Mode != "all" {
+		wantHuman := o.Mode == "human"
+		var f []dataset.MoveRecord
+		for _, r := range recs {
+			if (r.Mode == dataset.ModeHuman) == wantHuman {
+				f = append(f, r)
+			}
+		}
+		recs = f
+	}
 	if len(recs) == 0 {
-		return nil, "", fmt.Errorf("no moves found in %s", o.DataDir)
+		return nil, "", fmt.Errorf("no moves found in %s (mode %q)", o.DataDir, modeName(o.Mode))
 	}
 
 	mock := false
@@ -147,6 +172,9 @@ func Run(o Options) (*Bundle, string, error) {
 
 	w("# The Observability Gambit: analysis report\n\n")
 	w("Generated %s from `%s`.\n\n", time.Now().UTC().Format(time.RFC3339), o.DataDir)
+	if m := modeName(o.Mode); m != "engine" {
+		w("> **Mode: %s.** This report includes games played by a person from the stage UI, so the opponent is not the usual Stockfish. Use `--mode engine` (the default) for the headline numbers.\n\n", m)
+	}
 	if mock {
 		w("> **Mock data.** Some or all moves come from the offline mock model, whose telemetry and move quality share a hidden cause by design. Use this report to rehearse the pipeline, never as a finding.\n\n")
 	}

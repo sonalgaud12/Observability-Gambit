@@ -15,6 +15,10 @@ import (
 	"sync"
 )
 
+// ModeHuman is the Mode value of games (and their moves) played by a person
+// from the stage UI. Every other game leaves Mode empty: agent vs. an engine.
+const ModeHuman = "human"
+
 // MoveRecord is one agent move: features known before the move is played,
 // plus the label computed after.
 type MoveRecord struct {
@@ -44,8 +48,10 @@ type MoveRecord struct {
 	IllegalAttempts int     `json:"illegal_attempts"`
 	FinishLength    bool    `json:"finish_length"`
 	Fallback        bool    `json:"fallback"`
+	TimedOut        bool    `json:"timed_out,omitempty"` // the per-move deadline hit (live games); also Fallback
 	LLMErrors       int     `json:"llm_errors"`
 	Reasoning       string  `json:"reasoning,omitempty"`
+	Mode            string  `json:"mode,omitempty"` // "" (engine opponent) or ModeHuman
 
 	// Label (ground truth from the engine). Never a feature.
 	EvalBeforeCP  int     `json:"eval_before_cp"`
@@ -70,6 +76,7 @@ type GameRecord struct {
 	StartedAt   string `json:"started_at"`
 	Blunders    int    `json:"blunders"`
 	Mistakes    int    `json:"mistakes"`
+	Mode        string `json:"mode,omitempty"` // "" (engine opponent) or ModeHuman
 }
 
 // Writer appends records to moves.jsonl and games.jsonl in a directory.

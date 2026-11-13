@@ -14,6 +14,9 @@ WITH
       SpanAttributes['chess.game.id']                          AS game_id,
       toUInt32OrZero(SpanAttributes['chess.move.number'])      AS move_number,
       SpanAttributes['gen_ai.request.model']                   AS model,
+      -- 'human' for games a person played from the stage UI (gambit serve --live),
+      -- '' for agent vs. Stockfish. Add WHERE mode = '' to leave human games out.
+      SpanAttributes['gambit.run.mode']                        AS mode,
       toUInt32OrZero(SpanAttributes['chess.legal_move_count']) AS legal_moves,
       toInt32OrZero(SpanAttributes['chess.material_balance'])  AS material_balance,
       toInt32OrZero(SpanAttributes['chess.eval.before_cp'])    AS eval_before_cp,
