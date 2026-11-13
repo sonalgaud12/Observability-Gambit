@@ -53,6 +53,13 @@ const (
 	// Marks traces produced by the offline mock model, so they can never be
 	// confused with real-model results in a backend.
 	GambitMock = attribute.Key("gambit.llm.mock")
+	// How the run was played. Absent for the usual agent-vs-Stockfish games;
+	// "human" when a person played the other side from the stage UI, so
+	// queries and dashboards can include or exclude those games.
+	GambitRunMode = attribute.Key("gambit.run.mode")
+	// Set when the per-move deadline cut the agent off and a random legal
+	// move was played in its place (live games only).
+	GambitTimedOut = attribute.Key("gambit.timed_out")
 )
 
 // --- Domain: the chess game -------------------------------------------------
@@ -73,6 +80,7 @@ const (
 	ChessIllegalAttempts = attribute.Key("chess.illegal_attempts")
 	ChessFallback        = attribute.Key("chess.fallback")
 	ChessOpponentElo     = attribute.Key("chess.opponent.elo")
+	ChessOpponentType    = attribute.Key("chess.opponent.type") // "human" in human games; absent otherwise
 )
 
 // --- Ground truth: the label. Never use these as predictive features. ------

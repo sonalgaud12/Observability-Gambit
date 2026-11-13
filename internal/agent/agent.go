@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"regexp"
@@ -42,6 +43,11 @@ type Agent struct {
 	llm    llm.Client
 	tracer trace.Tracer
 	rng    *rand.Rand
+
+	// OnProgress, if set, is called with the running stats of the current
+	// decision after every chat call and every rejected move, so a live UI can
+	// show the agent working. It runs on the deciding goroutine: keep it quick.
+	OnProgress func(Stats)
 }
 
 // New builds an agent. The client should already be llm.Instrument-ed.
@@ -65,13 +71,16 @@ type Stats struct {
 	IllegalAttempts int
 	FinishLength    bool
 	Fallback        bool
+	TimedOut        bool // the context deadline ended the decision; implies Fallback
 	LLMErrors       int
 	Reasoning       string // the final answer text
 }
 
 // Choose asks the model for a move in the game's current position.
 // It always returns a legal move: after MaxRetries it falls back to a random
-// legal move and flags it, so one bad response never kills a game.
+// legal move and flags it, so one bad response never kills a game. If ctx has
+// a deadline and it passes first, the same fallback applies and Stats.TimedOut
+// is set; any other cancellation is returned as an error.
 func (a *Agent) Choose(ctx context.Context, g *chess.Game) (*chess.Move, Stats, error) {
 	pos := g.Position()
 	legal := pos.ValidMoves()
@@ -86,14 +95,14 @@ func (a *Agent) Choose(ctx context.Context, g *chess.Game) (*chess.Move, Stats, 
 		tools = toolDefs
 	}
 
-	for attempt := 0; attempt <= a.cfg.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= a.cfg.MaxRetries && ctx.Err() == nil; attempt++ {
 		resp, err := a.complete(ctx, &msgs, tools, pos, &st)
 		if err != nil {
 			st.LLMErrors++
-			if ctx.Err() != nil {
-				return nil, st, ctx.Err()
+			a.progress(&st)
+			if ctx.Err() == nil {
+				sleep(ctx, time.Duration(attempt+1)*500*time.Millisecond)
 			}
-			time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
 			continue
 		}
 		st.Reasoning = resp.Message.Content
@@ -107,11 +116,19 @@ func (a *Agent) Choose(ctx context.Context, g *chess.Game) (*chess.Move, Stats, 
 			return mv, st, nil
 		}
 		st.IllegalAttempts++
+		a.progress(&st)
 		msgs = append(msgs, resp.Message, llm.Message{
 			Role: "user",
 			Content: fmt.Sprintf("%q is illegal or unreadable in this position. Legal moves: %s\nReply again, ending with a line `MOVE: <SAN>`.",
 				candidate, sanList(pos, legal)),
 		})
+	}
+
+	if err := ctx.Err(); err != nil {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return nil, st, err
+		}
+		st.TimedOut = true
 	}
 
 	// Fallback: keep the game going, but make the failure visible.
@@ -140,6 +157,7 @@ func (a *Agent) complete(ctx context.Context, msgs *[]llm.Message, tools []llm.T
 		st.InputTokens += resp.InputTokens
 		st.OutputTokens += resp.OutputTokens
 		st.ReasoningTokens += resp.ReasoningTokens
+		a.progress(st)
 
 		if len(resp.Message.ToolCalls) == 0 {
 			return resp, nil
@@ -149,6 +167,22 @@ func (a *Agent) complete(ctx context.Context, msgs *[]llm.Message, tools []llm.T
 			st.ToolCalls++
 			*msgs = append(*msgs, llm.Message{Role: "tool", ToolCallID: tc.ID, Content: a.runTool(ctx, tc, pos)})
 		}
+	}
+}
+
+func (a *Agent) progress(st *Stats) {
+	if a.OnProgress != nil {
+		a.OnProgress(*st)
+	}
+}
+
+// sleep waits for d or until ctx ends, whichever comes first.
+func sleep(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
 	}
 }
 
@@ -203,6 +237,11 @@ func extractMove(s string) string {
 	return strings.Trim(f[len(f)-1], ".,;:*`'\"")
 }
 
+// ParseMove reads a move in SAN (with or without check marks) or UCI and
+// returns the matching legal move in pos, or nil if there is none. The agent
+// and the human-mode UI share it, so both accept the same notations.
+func ParseMove(pos *chess.Position, s string) *chess.Move { return parseMove(pos, s) }
+
 // parseMove accepts SAN (with or without check marks) or UCI.
 func parseMove(pos *chess.Position, s string) *chess.Move {
 	s = strings.TrimSpace(strings.Trim(s, ".,;:*`'\"!?"))
@@ -244,7 +283,7 @@ func sanList(pos *chess.Position, moves []*chess.Move) string {
 
 // Attrs returns the trace-feature attributes for the invoke_agent span.
 func (s Stats) Attrs() []attribute.KeyValue {
-	return []attribute.KeyValue{
+	attrs := []attribute.KeyValue{
 		sc.GenAIUsageInputTokens.Int(s.InputTokens),
 		sc.GenAIUsageOutputTokens.Int(s.OutputTokens),
 		sc.GambitUsageReasoningTokens.Int(s.ReasoningTokens),
@@ -253,4 +292,8 @@ func (s Stats) Attrs() []attribute.KeyValue {
 		attribute.Int("gambit.chat_calls", s.ChatCalls),
 		attribute.Int("gambit.tool_calls", s.ToolCalls),
 	}
+	if s.TimedOut {
+		attrs = append(attrs, sc.GambitTimedOut.Bool(true))
+	}
+	return attrs
 }

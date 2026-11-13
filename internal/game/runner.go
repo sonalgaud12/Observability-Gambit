@@ -50,6 +50,9 @@ type Config struct {
 	Seed           int64
 	Writer         *dataset.Writer
 	KeepReasoning  bool
+	// Grader, if set, labels moves instead of a Stockfish started from
+	// StockfishPath. For tests and rehearsal without an engine installed.
+	Grader MoveGrader
 }
 
 // Run plays n games using `parallel` workers.
@@ -106,34 +109,22 @@ feed:
 
 type player struct {
 	cfg      Config
-	opponent *engine.Engine
-	grader   *Grader
+	opponent Opponent
+	grader   MoveGrader
 	brain    *engine.Engine
 	tracer   trace.Tracer
-	rng      *rand.Rand
 	worker   int
 }
 
+// newPlayer starts everything a batch worker needs: the grader, the mock's
+// brain, and the opponent.
 func newPlayer(cfg Config, worker int) (*player, error) {
-	p := &player{cfg: cfg, tracer: otel.Tracer(instrumentationName), worker: worker,
-		rng: rand.New(rand.NewSource(cfg.Seed + int64(worker)*7919))}
-
-	g, err := engine.Start(cfg.StockfishPath, map[string]string{"Threads": "1", "Hash": "64"})
+	p, err := newGradingPlayer(cfg, worker)
 	if err != nil {
 		return nil, err
 	}
-	p.grader = &Grader{Eng: g, Depth: cfg.GraderDepth}
-
-	if cfg.MockBrainSkill >= 0 {
-		b, err := engine.Start(cfg.StockfishPath, map[string]string{"Threads": "1", "Hash": "16", "Skill Level": strconv.Itoa(cfg.MockBrainSkill)})
-		if err != nil {
-			g.Close()
-			return nil, err
-		}
-		p.brain = b
-	}
-
-	if cfg.Opponent == "stockfish" {
+	switch cfg.Opponent {
+	case "stockfish":
 		opts := map[string]string{"Threads": "1", "Hash": "16"}
 		if cfg.OpponentElo > 0 {
 			opts["UCI_LimitStrength"] = "true"
@@ -141,16 +132,45 @@ func newPlayer(cfg Config, worker int) (*player, error) {
 		}
 		o, err := engine.Start(cfg.StockfishPath, opts)
 		if err != nil {
-			g.Close()
+			p.close()
 			return nil, err
 		}
-		p.opponent = o
+		p.opponent = &engineOpponent{eng: o, moveMS: cfg.OpponentMoveMS}
+	default:
+		p.opponent = &randomOpponent{rng: rand.New(rand.NewSource(cfg.Seed + int64(worker)*7919))}
+	}
+	return p, nil
+}
+
+// newGradingPlayer starts the grader and, for the mock model, its brain. It
+// has no opponent: the caller sets one (batch games) or supplies it per game
+// (live games).
+func newGradingPlayer(cfg Config, worker int) (*player, error) {
+	p := &player{cfg: cfg, tracer: otel.Tracer(instrumentationName), worker: worker}
+
+	if cfg.Grader != nil {
+		p.grader = cfg.Grader
+	} else {
+		g, err := engine.Start(cfg.StockfishPath, map[string]string{"Threads": "1", "Hash": "64"})
+		if err != nil {
+			return nil, err
+		}
+		p.grader = &Grader{Eng: g, Depth: cfg.GraderDepth}
+	}
+
+	if cfg.MockBrainSkill >= 0 {
+		b, err := engine.Start(cfg.StockfishPath, map[string]string{"Threads": "1", "Hash": "16", "Skill Level": strconv.Itoa(cfg.MockBrainSkill)})
+		if err != nil {
+			p.grader.Close()
+			return nil, err
+		}
+		p.brain = b
 	}
 	return p, nil
 }
 
 func (p *player) close() {
-	p.grader.Eng.Close()
+	p.grader.Close()
 	if p.brain != nil {
 		p.brain.Close()
 	}
@@ -173,13 +193,11 @@ func (p *player) play(ctx context.Context, idx int) error {
 	if idx%2 == 1 {
 		agentColor = chess.Black
 	}
-	if err := p.grader.Eng.NewGame(); err != nil {
+	if err := p.grader.NewGame(); err != nil {
 		return err
 	}
-	if p.opponent != nil {
-		if err := p.opponent.NewGame(); err != nil {
-			return err
-		}
+	if err := p.opponent.NewGame(); err != nil {
+		return err
 	}
 
 	g := chess.NewGame()
@@ -213,20 +231,62 @@ func (p *player) play(ctx context.Context, idx int) error {
 	if g.Outcome() == chess.NoOutcome {
 		res.Method = "MaxPlies"
 	}
-	for _, m := range moves {
-		switch m.Class {
-		case ClassBlunder:
-			res.Blunders++
-		case ClassMistake:
-			res.Mistakes++
-		}
-	}
+	res.Blunders, res.Mistakes = tally(moves)
 	log.Printf("game %s: agent=%s result=%s (%s) plies=%d blunders=%d mistakes=%d",
 		gameID, res.AgentColor, res.Result, res.Method, res.Plies, res.Blunders, res.Mistakes)
 	return p.cfg.Writer.WriteGame(res, moves)
 }
 
+// agentMove plays one agent move in a batch game: decide, then grade.
 func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, provider, gameID string) (dataset.MoveRecord, error) {
+	pm, err := p.decide(ctx, g, ag, provider, gameID, moveOpts{})
+	if err != nil {
+		return dataset.MoveRecord{}, err
+	}
+	return pm.finish()
+}
+
+// moveOpts tunes one agent move. The zero value is a plain batch move.
+type moveOpts struct {
+	mode    string        // "" for engine games, dataset.ModeHuman for human games
+	timeout time.Duration // hard cap on the decision; 0 = none
+	started func(traceID string)
+	decided func(d decision)
+}
+
+// decision is what a live session learns the moment the agent has chosen,
+// before the engine has graded the move.
+type decision struct {
+	Ply, MoveNumber, LegalMoves int
+	Color                       string
+	SAN, UCI, FENAfter, TraceID string
+	Latency                     time.Duration
+	Stats                       agent.Stats
+}
+
+// pendingMove is a decided move whose trace is still open, waiting for its
+// grade. Batch games grade it at once; live games grade it in the background
+// so the board is not held up by the engine.
+type pendingMove struct {
+	p      *player
+	ctx    context.Context // carries the open root span
+	root   trace.Span
+	before *chess.Position
+	after  *chess.Game // a snapshot: the live game moves on while this is graded
+	mv     *chess.Move
+
+	gameID, provider, mode string
+	ply, moveNo, legal     int
+	inCheck                bool
+	material               int
+	san, uci               string
+	st                     agent.Stats
+	latency                time.Duration
+}
+
+// decide starts the move's trace, asks the agent, and plays the chosen move on
+// g. The root span stays open until finish.
+func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, provider, gameID string, o moveOpts) (*pendingMove, error) {
 	before := g.Position()
 	ply := len(g.Moves()) + 1
 	moveNo := (ply + 1) / 2
@@ -246,9 +306,17 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 		sc.ChessMaterialBalance.Int(material),
 		sc.GenAIRequestModel.String(p.cfg.Agent.Model),
 	))
-	defer root.End()
 	if provider == "mock" {
 		root.SetAttributes(sc.GambitMock.Bool(true))
+	}
+	if o.mode != "" {
+		root.SetAttributes(sc.GambitRunMode.String(o.mode))
+	}
+	if o.mode == dataset.ModeHuman {
+		root.SetAttributes(sc.ChessOpponentType.String("human"))
+	}
+	if o.started != nil {
+		o.started(root.SpanContext().TraceID().String())
 	}
 
 	// --- the decision ---
@@ -259,36 +327,75 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 		sc.GenAIRequestModel.String(p.cfg.Agent.Model),
 		sc.GenAIConversationID.String(gameID),
 	))
+	if o.mode != "" {
+		// Also on the decision span, which reaches the Collector before the
+		// root does, so a tail sampler can already see the mode.
+		span.SetAttributes(sc.GambitRunMode.String(o.mode))
+	}
+	dctx := actx
+	if o.timeout > 0 {
+		var cancel context.CancelFunc
+		dctx, cancel = context.WithTimeout(actx, o.timeout)
+		defer cancel()
+	}
 	start := time.Now()
-	mv, st, err := ag.Choose(actx, g)
+	mv, st, err := ag.Choose(dctx, g)
 	latency := time.Since(start)
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 		span.End()
-		return dataset.MoveRecord{}, err
+		root.End()
+		return nil, err
 	}
 	san := chess.AlgebraicNotation{}.Encode(before, mv)
 	uci := chess.UCINotation{}.Encode(before, mv)
 	span.SetAttributes(st.Attrs()...)
 	span.SetAttributes(sc.ChessMoveSAN.String(san), sc.ChessMoveUCI.String(uci))
-	if st.Fallback {
+	switch {
+	case st.TimedOut:
+		span.SetStatus(codes.Error, "decision timed out; played a random legal move")
+		span.SetAttributes(sc.ErrorType.String("timeout"))
+	case st.Fallback:
 		span.SetStatus(codes.Error, "fell back to a random legal move")
 		span.SetAttributes(sc.ErrorType.String("fallback_move"))
 	}
 	span.End()
 
 	if err := g.Move(mv); err != nil {
-		return dataset.MoveRecord{}, fmt.Errorf("apply %s: %w", san, err)
+		root.End()
+		return nil, fmt.Errorf("apply %s: %w", san, err)
 	}
+	pm := &pendingMove{
+		p: p, ctx: ctx, root: root, before: before, after: g.Clone(), mv: mv,
+		gameID: gameID, provider: provider, mode: o.mode,
+		ply: ply, moveNo: moveNo, legal: len(legal), inCheck: inCheck, material: material,
+		san: san, uci: uci, st: st, latency: latency,
+	}
+	if o.decided != nil {
+		o.decided(decision{
+			Ply: ply, MoveNumber: moveNo, LegalMoves: len(legal), Color: colorName(before.Turn()),
+			SAN: san, UCI: uci, FENAfter: pm.after.Position().String(),
+			TraceID: root.SpanContext().TraceID().String(), Latency: latency, Stats: st,
+		})
+	}
+	return pm, nil
+}
+
+// finish grades the move, completes the root span, and returns the dataset row.
+func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
+	p, st, before := pm.p, pm.st, pm.before
+	defer pm.root.End()
 
 	// --- the label ---
-	ectx, ev := p.tracer.Start(ctx, "chess.evaluate", trace.WithAttributes(sc.ChessEngineDepth.Int(p.cfg.GraderDepth)))
-	gr, err := p.grader.Grade(ectx, before, mv, g)
+	ectx, ev := p.tracer.Start(pm.ctx, "chess.evaluate", trace.WithAttributes(sc.ChessEngineDepth.Int(p.cfg.GraderDepth)))
+	gr, err := p.grader.Grade(ectx, before, pm.mv, pm.after)
 	if err != nil {
 		ev.RecordError(err)
 		ev.SetStatus(codes.Error, err.Error())
 		ev.End()
+		pm.root.RecordError(err)
+		pm.root.SetStatus(codes.Error, err.Error())
 		return dataset.MoveRecord{}, err
 	}
 	ev.SetAttributes(
@@ -299,9 +406,9 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 	)
 	ev.End()
 
-	root.SetAttributes(
-		sc.ChessMoveSAN.String(san),
-		sc.ChessMoveUCI.String(uci),
+	pm.root.SetAttributes(
+		sc.ChessMoveSAN.String(pm.san),
+		sc.ChessMoveUCI.String(pm.uci),
 		sc.ChessIllegalAttempts.Int(st.IllegalAttempts),
 		sc.ChessFallback.Bool(st.Fallback),
 		sc.ChessEvalBeforeCP.Int(gr.EvalBeforeCP),
@@ -311,22 +418,26 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 		sc.ChessMoveClass.String(gr.Class),
 		sc.ChessBestMove.String(gr.BestMove),
 	)
+	if st.TimedOut {
+		pm.root.SetAttributes(sc.GambitTimedOut.Bool(true))
+	}
 
 	rec := dataset.MoveRecord{
-		GameID: gameID, Ply: ply, MoveNumber: moveNo, Color: colorName(before.Turn()),
-		Provider: provider, Model: p.cfg.Agent.Model,
-		TraceID:   root.SpanContext().TraceID().String(),
-		FENBefore: before.String(), SAN: san, UCI: uci,
+		GameID: pm.gameID, Ply: pm.ply, MoveNumber: pm.moveNo, Color: colorName(before.Turn()),
+		Provider: pm.provider, Model: p.cfg.Agent.Model,
+		TraceID:   pm.root.SpanContext().TraceID().String(),
+		FENBefore: before.String(), SAN: pm.san, UCI: pm.uci,
 
-		LegalMoveCount: len(legal), InCheck: inCheck, MaterialBalance: material,
+		LegalMoveCount: pm.legal, InCheck: pm.inCheck, MaterialBalance: pm.material,
 
-		LatencyMS: float64(latency.Microseconds()) / 1000, ChatCalls: st.ChatCalls,
+		LatencyMS: float64(pm.latency.Microseconds()) / 1000, ChatCalls: st.ChatCalls,
 		InputTokens: st.InputTokens, OutputTokens: st.OutputTokens, ReasoningTokens: st.ReasoningTokens,
 		ToolCalls: st.ToolCalls, IllegalAttempts: st.IllegalAttempts,
-		FinishLength: st.FinishLength, Fallback: st.Fallback, LLMErrors: st.LLMErrors,
+		FinishLength: st.FinishLength, Fallback: st.Fallback, TimedOut: st.TimedOut, LLMErrors: st.LLMErrors,
 
 		EvalBeforeCP: gr.EvalBeforeCP, EvalAfterCP: gr.EvalAfterCP, CPLoss: gr.CPLoss,
 		WinChanceDrop: gr.WinChanceDrop, Class: gr.Class, BestMove: gr.BestMove,
+		Mode: pm.mode,
 	}
 	if p.cfg.KeepReasoning {
 		rec.Reasoning = truncate(st.Reasoning, 4000)
@@ -335,24 +446,24 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 }
 
 func (p *player) opponentMove(ctx context.Context, g *chess.Game) error {
-	pos := g.Position()
-	if p.opponent == nil {
-		moves := pos.ValidMoves()
-		return g.Move(moves[p.rng.Intn(len(moves))])
-	}
-	ms := p.cfg.OpponentMoveMS
-	if ms <= 0 {
-		ms = 100
-	}
-	r, err := p.opponent.Search(ctx, pos.String(), fmt.Sprintf("movetime %d", ms))
+	mv, err := p.opponent.Move(ctx, g)
 	if err != nil {
 		return err
 	}
-	mv, err := chess.UCINotation{}.Decode(pos, r.BestMove)
-	if err != nil {
-		return fmt.Errorf("opponent move %q: %w", r.BestMove, err)
-	}
 	return g.Move(mv)
+}
+
+// tally counts a game's blunders and mistakes.
+func tally(moves []dataset.MoveRecord) (blunders, mistakes int) {
+	for _, m := range moves {
+		switch m.Class {
+		case ClassBlunder:
+			blunders++
+		case ClassMistake:
+			mistakes++
+		}
+	}
+	return
 }
 
 // engineBrain adapts a weakened engine to llm.Brain for the mock model.

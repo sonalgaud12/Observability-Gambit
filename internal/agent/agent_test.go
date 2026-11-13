@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/notnil/chess"
 	"go.opentelemetry.io/otel"
@@ -118,5 +119,79 @@ func TestOpenAICompatibleLoop(t *testing.T) {
 	}
 	if names["chat m"] != 3 || names["execute_tool legal_moves"] != 1 || names["chess.validate_move"] != 2 {
 		t.Errorf("unexpected spans: %v", names)
+	}
+}
+
+// hangs never answers until its context ends.
+type hangs struct{}
+
+func (hangs) Provider() string { return "hang" }
+func (hangs) Chat(ctx context.Context, _ llm.Request) (llm.Response, error) {
+	<-ctx.Done()
+	return llm.Response{}, ctx.Err()
+}
+
+func TestChooseDeadlineFallsBackToARandomMove(t *testing.T) {
+	ag := New(Config{Model: "m", MaxRetries: 3}, hangs{}, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	mv, st, err := ag.Choose(ctx, chess.NewGame())
+	if err != nil {
+		t.Fatalf("a deadline must not be an error: %v", err)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Errorf("took %s: the deadline did not cut the decision short", time.Since(start))
+	}
+	if mv == nil || !st.Fallback || !st.TimedOut || st.LLMErrors == 0 {
+		t.Errorf("mv=%v stats=%+v", mv, st)
+	}
+	if mv == nil || parseMove(chess.NewGame().Position(), (chess.UCINotation{}).Encode(chess.NewGame().Position(), mv)) == nil {
+		t.Errorf("the fallback move is not legal: %v", mv)
+	}
+}
+
+func TestChooseCancellationIsStillAnError(t *testing.T) {
+	ag := New(Config{Model: "m", MaxRetries: 3}, hangs{}, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(50*time.Millisecond, cancel)
+	if _, _, err := ag.Choose(ctx, chess.NewGame()); err == nil {
+		t.Fatal("cancelling a game must not look like a fallback move")
+	}
+}
+
+func TestChooseReportsProgress(t *testing.T) {
+	var seen []Stats
+	client := llm.NewMock(3)
+	t.Setenv("GAMBIT_MOCK_LATENCY_SCALE", "0")
+	ag := New(Config{Model: "m", MaxRetries: 3}, llm.Instrument(client), 1)
+	ag.OnProgress = func(s Stats) { seen = append(seen, s) }
+	_, st, err := ag.Choose(context.Background(), chess.NewGame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) == 0 || seen[len(seen)-1].ChatCalls == 0 {
+		t.Fatalf("no progress reported: %+v", seen)
+	}
+	for i := 1; i < len(seen); i++ {
+		if seen[i].ChatCalls < seen[i-1].ChatCalls {
+			t.Errorf("progress went backwards: %+v", seen)
+		}
+	}
+	if seen[len(seen)-1].ChatCalls != st.ChatCalls {
+		t.Errorf("last progress %+v does not match the final stats %+v", seen[len(seen)-1], st)
+	}
+}
+
+func TestParseMoveIsExported(t *testing.T) {
+	pos := chess.NewGame().Position()
+	if mv := ParseMove(pos, "e2e4"); mv == nil || mv.String() != "e2e4" {
+		t.Errorf("UCI: %v", mv)
+	}
+	if mv := ParseMove(pos, "Nf3"); mv == nil || mv.String() != "g1f3" {
+		t.Errorf("SAN: %v", mv)
+	}
+	if ParseMove(pos, "e2e5") != nil {
+		t.Error("illegal move parsed")
 	}
 }
