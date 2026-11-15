@@ -185,6 +185,121 @@ ground-truth label to the trace, then join it back to the trace's own telemetry.
 Keyboard: <kbd>←</kbd>/<kbd>→</kbd> step, <kbd>space</kbd> play, <kbd>b</kbd> next blunder.
 Every state is a URL (`?game=…&ply=…`), so you can bookmark exact moments.
 
+## Human mode: play the agent
+
+`gambit serve --live` adds a second page, `/live.html`, where a person plays the
+agent instead of Stockfish. The audience watches the agent think (a clock, chat
+calls, tokens and retries ticking up), sees its move land, then watches
+Stockfish grade it and opens that move's trace. The recorded-game replay is
+untouched: `/` still serves it, and `/live.html` links back to it.
+
+```bash
+make live-mock                     # offline mock model, no API key (rehearsal)
+make live MODEL=gpt-4o-mini        # a real model, same variables as `make play`
+make live MODEL=llama3.1:8b BASE_URL=http://localhost:11434/v1 PROVIDER=ollama
+# then open http://localhost:8080/live.html
+```
+
+It needs Stockfish (it grades every agent move) and the usual Collector stack if
+you want the traces (`make up`). Without a Collector the game still plays and is
+still recorded to `data/`. Flags (`./bin/gambit serve -h`; pass extras with
+`LIVE_ARGS='...'`): the model flags are the ones `play` takes, except that the
+model is `--agent-model` here because `--model` is the analysis bundle.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--live` | off | Turn human mode on. Without it, `serve` is the replay UI only. |
+| `--move-timeout` | 15s | Hard cap on one agent move, retries and tool calls included. `0` = no cap. |
+| `--script` | none | Scripted opening: the human's moves, e.g. `"e4 Nf3 Bc4"`. Editable in the UI. |
+| `--trace-delay` | 20s | How long after a move is graded its "Open trace" link is offered (see below). |
+| `--grader-depth` | 14 | Same label as batch games. |
+
+### On stage
+
+1. Start with `make live` (or `live-mock`). Press **New game**, pick a colour.
+2. Play by clicking a piece, then a highlighted square. Illegal moves are never
+   sent: the UI only offers legal squares, and the server re-checks every move
+   and refuses a bad one with a reason. Pawns that reach the last rank ask for
+   the piece.
+3. **Scripted opening.** The box under the board holds the human's prepared line
+   (`e4 Nf3 Bc4`). The board outlines the next scripted move; **space** (or the
+   button) plays it through the normal move path, so it is validated like any
+   other move. Play something else, or a scripted move stops being legal, and the
+   script switches itself off for the rest of the game. Clear the box to play freely.
+4. The agent's turn shows a live clock against the move timeout, plus chat calls,
+   tokens, tool calls and illegal tries so far. When it moves, its panel shows the
+   same chips as the replay and the model's answer; a second later the Stockfish
+   grade (best … blunder) appears, and the **Open trace** link follows.
+5. Click any agent move in the move list to bring its panel and trace back.
+6. When the game ends the status box links to its replay, with the risk timeline.
+
+### What happens when things go wrong
+
+| Situation | What the audience sees | What is recorded |
+|---|---|---|
+| The model is slow or stuck | The clock turns amber, then red, against the timeout. At the timeout a **random legal move** is played and the panel says **Timed out**; the game goes on. | The decision span has `error.type=timeout`, `gambit.timed_out=true`, `chess.fallback=true`. A deliberately bad trace to open. |
+| The model keeps answering with illegal moves | "illegal tries" climbs; after `--retries` a random legal move is played. | Same as a batch game: `chess.validate_move` spans, `chess.fallback=true`. |
+| The human tries an illegal move | A toast; nothing is sent. The server also rejects it (HTTP 422). | Nothing. |
+| The browser loses the connection | A banner, and the browser reconnects by itself and replays exactly the events it missed (every event has an id; `Last-Event-ID` resumes). | Nothing lost: the game lives on the server. |
+| The server is overdue | If an answer is more than 4s past the timeout, a banner says so instead of freezing. | |
+| Stockfish cannot grade a move | A warning; the game goes on. | That move is left out of the dataset (its trace is marked as an error). |
+
+**Fallback: a recorded game.** Human mode is the riskiest part of the talk, so
+keep the replay ready. The week before, play a rehearsal through `make live-mock`
+or `make live` and pick the game you like: every finished game is written to
+`data/` like any other, so `make serve` replays it with the risk timeline, and
+`make replay GAME=<id>` puts its traces back into the stack. On stage, if the live
+game misbehaves, press **Recorded games ▸** (or open `/?game=<id>` directly): it
+is the same board and panels, driven by the recording instead of the model. Also
+keep a screen capture.
+
+### What gets recorded
+
+An agent move in a human game is traced exactly like one in a batch game (same
+spans, same attributes, graded by the same second Stockfish), with these extras:
+
+- `gambit.run.mode=human` and `chess.opponent.type=human` on the root span (the
+  mode is also on `invoke_agent`, so the tail sampler can see it early). Batch games
+  carry neither.
+- `data/moves.jsonl` and `data/games.jsonl` rows with `"mode":"human"`, and
+  `"timed_out":true` on a move cut off by the timeout. The game id starts with `h`.
+- `gambit analyze --mode engine|human|all` picks which games the analysis uses.
+  The default, `engine`, leaves human games out, so a stage game never changes the
+  headline numbers; reports for the other modes say so at the top.
+- In ClickHouse, `otel.gambit_moves` has a `mode` column (`''` or `'human'`).
+  Dashboards and `make sql` include human games unless you filter on it.
+- The Grafana Cloud route (`make up-cloud`) is unchanged and sends human traces too.
+
+### Trace links and the Collector
+
+The Collector's tail sampler holds a trace for `decision_wait` (15s) before
+Jaeger gets it, so a trace is not there the instant the move lands. The link
+therefore appears `--trace-delay` (20s) after the grade, with a countdown. Three
+things keep it honest:
+
+- A `keep-human-games` policy keeps every human trace, instead of the 10% baseline.
+- The sampler decides `decision_wait` after a trace's first span arrives, so a move
+  whose spans straggle in later than that (a long chain of retries, a raised
+  `--move-timeout`) can reach Jaeger incomplete or not at all. The default 15s cap
+  fits; if you raise it, raise `decision_wait` in `collector/otel-collector.yaml` too.
+- If `--trace-url` points at a backend without tail sampling (Grafana Cloud or Tempo),
+  pass `--trace-delay 0`.
+
+### API
+
+The page is a thin client over a small API, so a rehearsal can also be scripted:
+
+| | |
+|---|---|
+| `POST /api/live/new` `{"human_color":"white","script":["e4"]}` | start a game (abandons a running one); returns `{"id"}` |
+| `POST /api/live/move` `{"id","move"}` | the human's move, UCI (`e2e4`, `e7e8q`) or SAN; 422 if illegal, 409 if it is not their turn |
+| `POST /api/live/resign` `{"id"}` | |
+| `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `agent_graded`, `game_over`, `game_saved`, `notice`, `error` |
+| `GET /api/live/state?id=` | the whole event log as JSON |
+
+POSTs must be same-origin JSON: a page on another origin cannot start games on
+the stage laptop. Serve on `localhost` (the default), not on a shared network.
+
 ## Where `gen_ai.*` held up, and where it didn't
 
 What I ran into while building this. Check each point against the semconv
@@ -217,13 +332,13 @@ version you present; these conventions are moving.
 ## Repo layout
 
 ```
-cmd/gambit/              CLI: play, analyze, serve, extract-traces
+cmd/gambit/              CLI: play, analyze, serve (replay + human mode), extract-traces
 internal/agent/          the LLM player: prompts, tools, retries, validation spans
 internal/llm/            OpenAI-compatible client, gen_ai instrumentation, mock model
 internal/engine/         minimal UCI client for Stockfish
-internal/game/           game runner, trace shape, grading and classification
+internal/game/           game runner, trace shape, grading and classification, opponents, human-mode sessions
 internal/analysis/       features, logistic regression, AUC + bootstrap, report
-internal/web/            stage UI (embedded single page)
+internal/web/            stage UI (embedded pages: replay and human mode) and the live API
 internal/semconv/        every attribute key in one place
 internal/otlpjson/       cut one game's traces out of a recording
 collector/               Collector pipeline + replay config

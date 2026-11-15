@@ -54,6 +54,19 @@ func Classify(drop float64, playedBest bool) string {
 	}
 }
 
+// MoveGrader labels moves. *Grader (Stockfish) is the real one.
+type MoveGrader interface {
+	Grade(ctx context.Context, before *chess.Position, played *chess.Move, after *chess.Game) (Grade, error)
+	NewGame() error
+	Close()
+}
+
+// NewGame resets the engine between games.
+func (g *Grader) NewGame() error { return g.Eng.NewGame() }
+
+// Close stops the engine.
+func (g *Grader) Close() { g.Eng.Close() }
+
 // Grader evaluates moves with a full-strength engine at a fixed depth.
 type Grader struct {
 	Eng   *engine.Engine

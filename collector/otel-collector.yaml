@@ -44,6 +44,14 @@ processors:
           key: chess.illegal_attempts
           min_value: 1
           max_value: 1000
+      # Games a person played from the stage UI (gambit serve --live): keep
+      # every move, so its "Open trace" link always lands on a trace. Needs the
+      # move to finish within decision_wait, see the README's human mode section.
+      - name: keep-human-games
+        type: string_attribute
+        string_attribute:
+          key: gambit.run.mode
+          values: [human]
       - name: keep-errors
         type: status_code
         status_code:
