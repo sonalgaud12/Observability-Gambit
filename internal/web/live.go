@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -103,7 +104,12 @@ func (s *server) liveNew(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, err.Error())
 		return
 	case errors.Is(err, game.ErrRateLimited):
-		w.Header().Set("Retry-After", "60")
+		secs := 60
+		var rl *game.RateLimitError
+		if errors.As(err, &rl) {
+			secs = int(math.Ceil(rl.RetryAfter.Seconds()))
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
 		fail(w, http.StatusTooManyRequests, err.Error())
 		return
 	case err != nil:

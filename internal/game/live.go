@@ -114,6 +114,20 @@ var (
 	ErrUnknownModel = errors.New("unknown model")
 )
 
+// RateLimitError is the error behind ErrRateLimited; RetryAfter is how long
+// until the oldest game in the exhausted window ages out.
+type RateLimitError struct {
+	Limit      int
+	Window     string
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("%s: %d games per %s are allowed; try again in about %s", ErrRateLimited, e.Limit, e.Window, e.RetryAfter)
+}
+
+func (e *RateLimitError) Unwrap() error { return ErrRateLimited }
+
 // Event is one entry in a session's log.
 type Event struct {
 	ID   int             `json:"id"` // 1-based, contiguous: the SSE event id
@@ -233,7 +247,7 @@ func (l *Live) rateLimit() error {
 			if wait < time.Minute {
 				wait = time.Minute
 			}
-			return fmt.Errorf("%w: %d games per %s are allowed; try again in about %s", ErrRateLimited, limit, name, wait)
+			return &RateLimitError{Limit: limit, Window: name, RetryAfter: wait}
 		}
 		return nil
 	}

@@ -467,8 +467,12 @@ func TestRateLimitIs429WithRetryAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("Retry-After") == "" {
-		t.Errorf("second: %d, Retry-After %q", resp.StatusCode, resp.Header.Get("Retry-After"))
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second: %d, want 429", resp.StatusCode)
+	}
+	secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || secs < 3000 || secs > 3600 {
+		t.Errorf("Retry-After %q, want the hourly window's remaining wait in seconds", resp.Header.Get("Retry-After"))
 	}
 }
 
