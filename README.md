@@ -200,7 +200,7 @@ make live MODEL=llama3.1:8b BASE_URL=http://localhost:11434/v1 PROVIDER=ollama
 # then open http://localhost:8080/live.html
 ```
 
-It needs Stockfish (it grades every agent move) and the usual Collector stack if
+It needs Stockfish (it grades every move, the person's and the agent's) and the usual Collector stack if
 you want the traces (`make up`). Without a Collector the game still plays and is
 still recorded to `data/`. Flags (`./bin/gambit serve -h`; pass extras with
 `LIVE_ARGS='...'`): the model flags are the ones `play` takes, except that the
