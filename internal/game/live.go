@@ -538,6 +538,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 					s.emit("agent_moved", map[string]any{
 						"ply": d.Ply, "move_number": d.MoveNumber, "color": d.Color,
 						"san": d.SAN, "uci": d.UCI, "fen_after": d.FENAfter, "trace_id": d.TraceID,
+						"explain":    d.Explain,
 						"latency_ms": float64(d.Latency.Microseconds()) / 1000,
 						"chat_calls": st.ChatCalls, "tool_calls": st.ToolCalls,
 						"input_tokens": st.InputTokens, "output_tokens": st.OutputTokens,
@@ -570,11 +571,16 @@ func (s *Session) run(ctx context.Context, seq int) {
 				recMu.Lock()
 				records = append(records, rec)
 				recMu.Unlock()
-				s.emit("agent_graded", map[string]any{
+				ev := map[string]any{
 					"ply": rec.Ply, "class": rec.Class, "cp_loss": rec.CPLoss,
 					"win_chance_drop": rec.WinChanceDrop, "best_move": rec.BestMove,
 					"eval_before_cp": rec.EvalBeforeCP, "eval_after_cp": rec.EvalAfterCP,
-				})
+					"win_pct_lost": WinPercentLost(pm.grade),
+				}
+				if note, ok := Coach(pm.before, pm.mv, pm.grade, false); ok {
+					ev["coach"] = note
+				}
+				s.emit("agent_graded", ev)
 			}()
 			continue
 		}
@@ -627,9 +633,18 @@ func (s *Session) run(ctx context.Context, seq int) {
 			}
 			scriptIdx++
 		}
+		ply := len(g.Moves())
 		s.emit("human_moved", map[string]any{
-			"ply": len(g.Moves()), "san": san, "uci": uci, "fen_after": g.Position().String(),
+			"ply": ply, "san": san, "uci": uci, "fen_after": g.Position().String(),
+			"explain": Describe(pos, mv),
 		})
+		// Grade the move in the background: the board and the agent's turn do
+		// not wait for Stockfish, and a failure only hides the grade.
+		wg.Add(1)
+		go func(before *chess.Position, mv *chess.Move, after *chess.Game, ply int, san, uci string) {
+			defer wg.Done()
+			s.gradeHuman(ctx, before, mv, after, ply, san, uci)
+		}(pos, mv, g.Clone(), ply, san, uci)
 	}
 
 	// --- the end ---

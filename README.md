@@ -285,6 +285,34 @@ spans, same attributes, graded by the same second Stockfish), with these extras:
   Dashboards and `make sql` include human games unless you filter on it.
 - The Grafana Cloud route (`make up-cloud`) is unchanged and sends human traces too.
 
+### Feedback for the person playing
+
+The person's own moves are graded too, so a beginner learns while they play:
+
+- Each of their moves is graded by the same Stockfish grader, with the same five
+  classes (best, good, inaccuracy, mistake, blunder), in the background: the
+  board and the agent's turn never wait for it. If the grader fails, only the
+  grade is missing.
+- After an inaccuracy, mistake or blunder the card under the board shows the move
+  Stockfish preferred, a short reason, and how much winning chance the move cost,
+  in percent. The reason comes from Stockfish's choice plus plain rules (a piece
+  left to be taken, a checkmate missed or allowed, what the better move wins or
+  attacks) and, if none applies, the change in the score. No model is called.
+- Every move, the person's and the agent's, can be read without chess notation:
+  hover, focus or tap a move to see "Knight moves to h3" or "Pawn on e takes the
+  knight on d5" (castling, promotion, en passant, check and checkmate included),
+  with the squares lit on the board. Grade labels and piece names are explained
+  next to where they appear.
+- The agent's graded moves get the same better-move note, written about the agent.
+- The grade of a human move is not an agent result: it is not written to
+  `moves.jsonl`, is not counted in a game's blunders and mistakes, and so never
+  reaches `gambit analyze`.
+- In traces it is a separate small trace named `chess.human_move` (one per human
+  move), with `chess.player.type=human`, `gambit.run.mode=human`, and the grade in
+  `chess.human.move.class`, `chess.human.eval.*`. It has no `gen_ai.*` attributes
+  and no `chess.move.class`, so dashboards built on the agent's attributes ignore
+  it; the tail sampler keeps it with the other human-game traces.
+
 ### Trace links and the Collector
 
 The Collector's tail sampler holds a trace for `decision_wait` (15s) before
@@ -309,7 +337,7 @@ The page is a thin client over a small API, so a rehearsal can also be scripted:
 | `POST /api/live/new` `{"human_color":"white","script":["e4"],"model":"luna-6"}` | start a game (abandons a running one, or 409 with `--exclusive`; 429 with `Retry-After` over the game limits; `model` only with `--models`); returns `{"id"}` |
 | `POST /api/live/move` `{"id","move"}` | the human's move, UCI (`e2e4`, `e7e8q`) or SAN; 422 if illegal, 409 if it is not their turn |
 | `POST /api/live/resign` `{"id"}` | |
-| `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `agent_graded`, `game_over`, `game_saved`, `notice`, `error` |
+| `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `human_graded`, `agent_graded`, `game_over`, `game_saved`, `notice`, `error` |
 | `GET /api/live/state?id=` | the whole event log as JSON |
 
 POSTs must be same-origin JSON: a page on another origin cannot start games on

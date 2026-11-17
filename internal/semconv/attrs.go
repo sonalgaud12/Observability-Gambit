@@ -85,6 +85,22 @@ const (
 	ChessFallback        = attribute.Key("chess.fallback")
 	ChessOpponentElo     = attribute.Key("chess.opponent.elo")
 	ChessOpponentType    = attribute.Key("chess.opponent.type") // "human" in human games; absent otherwise
+	// Set on the span of a move the human played in a human game ("human").
+	// Those spans carry the chess.human.* keys below, never chess.move.class,
+	// so the human's grades cannot be mixed into the agent's.
+	ChessPlayerType = attribute.Key("chess.player.type")
+)
+
+// --- The human's graded moves (human mode only) -----------------------------
+//
+// Deliberately not the agent's chess.move.class / chess.eval.* keys: dashboards
+// and the tail sampler read those as the agent's results.
+
+const (
+	ChessHumanMoveClass     = attribute.Key("chess.human.move.class")
+	ChessHumanCPLoss        = attribute.Key("chess.human.eval.cp_loss")
+	ChessHumanWinChanceDrop = attribute.Key("chess.human.eval.win_chance_drop")
+	ChessHumanBestMove      = attribute.Key("chess.human.eval.best_move")
 )
 
 // --- Ground truth: the label. Never use these as predictive features. ------
