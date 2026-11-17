@@ -532,3 +532,61 @@ func TestPlayerLabelIsCleaned(t *testing.T) {
 		}
 	}
 }
+
+// The coach comments on the human's move, and "Ask the coach why" works on the
+// agent's, over HTTP, with the mock model.
+func TestCoachOverHTTP(t *testing.T) {
+	s := newLiveServer(t)
+	_, j := s.post(t, "/api/live/new", map[string]any{}, nil)
+	id := j["id"].(string)
+	s.waitEvent(t, id, "human_turn", nil)
+	if code, _ := s.post(t, "/api/live/move", map[string]any{"id": id, "move": "e2e4"}, nil); code != 200 {
+		t.Fatalf("move: %d", code)
+	}
+	c := s.waitEvent(t, id, "coach_comment", nil)
+	if c.Data["kind"] != "comment" || c.Data["ply"] != float64(1) || c.Data["text"] == "" {
+		t.Errorf("coach_comment = %v", c.Data)
+	}
+	s.waitEvent(t, id, "agent_graded", atPly(2))
+
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 2}, nil); code != 200 {
+		t.Fatalf("ask the coach why: %d", code)
+	}
+	why := s.waitEvent(t, id, "coach_comment", func(d map[string]any) bool { return d["kind"] == "why" })
+	if why.Data["ply"] != float64(2) || why.Data["text"] == "" {
+		t.Errorf("why = %v", why.Data)
+	}
+
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 40}, nil); code != 404 {
+		t.Errorf("unknown move: %d, want 404", code)
+	}
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": "nope", "ply": 1}, nil); code != 404 {
+		t.Errorf("unknown game: %d, want 404", code)
+	}
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 2}, map[string]string{"Origin": "http://evil.example"}); code != 403 {
+		t.Errorf("cross-origin: %d, want 403", code)
+	}
+	var cfg struct {
+		Live struct {
+			Info struct {
+				Coach bool `json:"coach"`
+			} `json:"info"`
+		} `json:"live"`
+	}
+	s.get(t, "/api/config", &cfg)
+	if !cfg.Live.Info.Coach {
+		t.Errorf("/api/config does not say the coach is on: %+v", cfg)
+	}
+}
+
+func TestCoachOffOverHTTP(t *testing.T) {
+	s := newLiveServerWith(t, func(c *game.LiveConfig) { c.NoCoach = true })
+	_, j := s.post(t, "/api/live/new", map[string]any{}, nil)
+	id := j["id"].(string)
+	s.waitEvent(t, id, "human_turn", nil)
+	s.post(t, "/api/live/move", map[string]any{"id": id, "move": "e2e4"}, nil)
+	s.waitEvent(t, id, "human_graded", nil)
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 1}, nil); code != 404 {
+		t.Errorf("coach off: %d, want 404", code)
+	}
+}

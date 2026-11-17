@@ -200,7 +200,8 @@ func TestLiveHumanGame(t *testing.T) {
 	// The event order a UI relies on.
 	var got []string
 	for _, ty := range types(s) {
-		if ty != "human_graded" { // the grade of the human's move arrives whenever Stockfish is done
+		// the grade of the human's move, and the coach's remarks on it, arrive whenever they are done
+		if ty != "human_graded" && !strings.HasPrefix(ty, "coach_") {
 			got = append(got, ty)
 		}
 	}

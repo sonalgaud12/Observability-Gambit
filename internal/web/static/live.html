@@ -76,6 +76,11 @@
   .coach p { margin: 8px 0 0; }
   .coach .better { font-size: 17px; }
   .coach .cost { font-weight: 600; }
+  .coachsay { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .coachsay p { margin: 6px 0 0; }
+  .coachsay .says { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-right: 6px; }
+  .coachsay .thinking { color: var(--muted); animation: pulse 1.4s ease-in-out infinite; }
+  .coachsay button.ask { margin-top: 8px; }
   .gradeNote { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
   details.legend { margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
   details.legend summary { cursor: pointer; font-weight: 600; }
@@ -174,7 +179,7 @@
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
-const EVENTS = ["game_started", "human_turn", "human_moved", "human_graded", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "game_over", "game_saved", "notice", "error"];
+const EVENTS = ["game_started", "human_turn", "human_moved", "human_graded", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "coach_thinking", "coach_comment", "coach_unavailable", "game_over", "game_saved", "notice", "error"];
 // What each grade means, for someone who has never played chess.
 const GRADE_INFO = {
   best: ["Best move", "The strongest move Stockfish could find."],
@@ -209,7 +214,7 @@ let es = null;
 
 function fresh() {
   return { id: null, humanColor: "white", agentColor: "black", fen: START, legal: {}, myTurn: false, sel: null, last: null,
-           plies: [], agent: {}, human: {}, graded: {}, coachPly: null, coachPicked: null, hover: null, pin: null, thinking: null, follow: true, picked: null, hint: null, scripted: "",
+           plies: [], agent: {}, human: {}, graded: {}, coach: {}, coachPly: null, coachPicked: null, hover: null, pin: null, thinking: null, follow: true, picked: null, hint: null, scripted: "",
            over: null, saved: null, error: null, timeoutMS: 0, sending: false };
 }
 
@@ -322,6 +327,10 @@ function handle(type, d) {
       if (S.agent[d.ply]) S.agent[d.ply].grade = d;
       S.graded[d.ply] = Date.now();
       break;
+    case "coach_thinking": coachSet(d.ply, d.kind, { state: "thinking" }); break;
+    case "coach_comment": coachSet(d.ply, d.kind, { state: "done", text: d.text }); break;
+    // A comment nobody asked for simply does not appear; an answer somebody asked for says so.
+    case "coach_unavailable": coachSet(d.ply, d.kind, d.kind === "why" ? { state: "failed" } : null); break;
     case "game_over": S.over = d; S.myTurn = false; S.thinking = null; S.hint = null; S.scripted = ""; break;
     case "game_saved": S.saved = d; if (es) es.close(); showConn(""); break;
     case "notice": toast(d.message, d.level === "info" ? "info" : ""); break;
@@ -329,6 +338,42 @@ function handle(type, d) {
   }
   render();
 }
+
+// ---------- the coach ----------
+
+function coachSet(ply, kind, v) {
+  const c = (S.coach[ply] ||= {});
+  if (v) c[kind] = v; else delete c[kind];
+}
+
+// What the coach said about a move, and the button that asks it why. A move can be asked about once it has its grade.
+function coachHTML(ply, graded) {
+  if (!live.info || !live.info.coach) return "";
+  const c = S.coach[ply] || {};
+  const say = (m) => m.state === "thinking" ? `<p class="thinking">The coach is thinking…</p>`
+    : m.state === "failed" ? `<p class="gradeNote">The coach could not answer this time. You can ask again.</p>`
+    : `<p><span class="says">Coach</span>${esc(m.text)}</p>`;
+  let h = "";
+  if (c.comment) h += say(c.comment);
+  if (c.why) h += say(c.why);
+  const asked = c.why && c.why.state !== "failed";
+  if (graded && !asked) h += `<button class="ask" data-ply="${ply}" title="The coach explains this move in plain words, using what Stockfish found">Ask the coach why</button>`;
+  return h ? `<div class="coachsay" aria-live="polite">${h}</div>` : "";
+}
+
+async function askCoach(ply) {
+  coachSet(ply, "why", { state: "thinking" }); render();
+  try { await api("api/live/coach", { id: S.id, ply }); }
+  catch (e) {
+    coachSet(ply, "why", null); render();
+    toast(e.status === 409 ? e.message : e.status === 429 ? "The coach is busy. Try again in a moment." : "The coach is not available: " + e.message);
+  }
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button.ask");
+  if (b && S.id) askCoach(+b.dataset.ply);
+});
 
 // ---------- board ----------
 
@@ -535,6 +580,7 @@ function renderPanel() {
     ${a.finish_length ? chip("finish", "length", true) : ""}${a.fallback && !a.timed_out ? chip("fallback", "random move", true) : ""}
     ${chip("legal moves", a.legal_move_count)}</div>`;
   if (a.reasoning) h += `<div class="reasoning">${esc(a.reasoning)}</div>`;
+  h += coachHTML(ply, !!g);
   p.innerHTML = h;
 }
 
@@ -591,6 +637,7 @@ function renderCoach() {
     html += `<p class="gradeNote">${esc(GRADE_INFO[g.class][1])}</p>`;
     if (["inaccuracy", "mistake", "blunder"].includes(g.class)) html += `<p>${betterMoveHTML(g, "Your")}</p>`;
   } else if (g) html += `<p class="gradeNote">Stockfish could not grade this move. The game goes on.</p>`;
+  html += coachHTML(ply, ok);
   el.innerHTML = html;
 }
 
