@@ -271,7 +271,7 @@ func serve(args []string) error {
 	// These only matter with --live. `serve --model` is the analysis bundle,
 	// so the live agent's model is --agent-model.
 	m := registerModelFlags(fs, "agent-model")
-	// Shared deployment (README: Deploy to the cloud). Every limit is off by
+	// Shared deployment (deploy/gcp/README.md). Every limit is off by
 	// default, so a laptop behaves exactly as before.
 	models := fs.String("models", "", "live: offer exactly these models, picked per game on the start screen (comma list of: "+knownPresets()+"; the first is the default). Each needs its key in OPENAI_API_KEY / ANTHROPIC_API_KEY and replaces --agent-model, --base-url, --provider")
 	defaultModel := fs.String("default-model", "", "live: the --models entry preselected on the start screen (default: the first)")
