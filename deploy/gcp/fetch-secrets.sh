@@ -32,7 +32,9 @@ render_passcodes() {
     return 1
   fi
   for id in $ids; do
-    name="${id##*/og-passcode-}"
+    # `value(name)` prints the bare secret id; older gcloud printed projects/N/secrets/<id>.
+    id="${id##*/}"
+    name="${id#og-passcode-}"
     printf '%s:%s\n' "$name" "$(secret "og-passcode-$name")"
   done | "$here/render-auth.sh" "$run_dir/caddy" | sed 's/^/fetch-secrets: passcode for /'
 }

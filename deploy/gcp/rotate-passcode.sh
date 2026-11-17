@@ -77,7 +77,7 @@ push() {
 case "$cmd" in
   list)
     gcloud secrets list --project="$PROJECT" --filter='labels.og-role=passcode' --format='value(name)' \
-      | sed 's#.*/og-passcode-##' | sort
+      | sed -e 's#.*/##' -e 's#^og-passcode-##' | sort
     ;;
   add)
     need_name
