@@ -271,6 +271,15 @@ func serve(args []string) error {
 	// These only matter with --live. `serve --model` is the analysis bundle,
 	// so the live agent's model is --agent-model.
 	m := registerModelFlags(fs, "agent-model")
+	// Shared deployment (README: Deploy to the cloud). Every limit is off by
+	// default, so a laptop behaves exactly as before.
+	models := fs.String("models", "", "live: offer exactly these models, picked per game on the start screen (comma list of: "+knownPresets()+"; the first is the default). Each needs its key in OPENAI_API_KEY / ANTHROPIC_API_KEY and replaces --agent-model, --base-url, --provider")
+	defaultModel := fs.String("default-model", "", "live: the --models entry preselected on the start screen (default: the first)")
+	exclusive := fs.Bool("exclusive", false, "live: refuse a new game (HTTP 409) while one is in progress, instead of abandoning it")
+	perHour := fs.Int("max-games-per-hour", 0, "live: games that may start per rolling hour (HTTP 429 beyond that; 0 = no limit)")
+	perDay := fs.Int("max-games-per-day", 0, "live: games that may start per rolling 24 hours (0 = no limit)")
+	idle := fs.Duration("idle-timeout", 0, "live: end a game whose human has not moved for this long (0 = never)")
+	tokenBudget := fs.Int("game-token-budget", 0, "live: end a game once the agent has used this many input+output tokens (0 = no limit)")
 	fs.Parse(args)
 
 	opts := web.Options{Addr: *addr, DataDir: *data, ModelPath: *model, TraceURL: *traceURL}
@@ -278,7 +287,16 @@ func serve(args []string) error {
 		return web.Serve(opts)
 	}
 
-	if err := m.check(); err != nil {
+	var choices []game.ModelChoice
+	if *models != "" {
+		ids, err := parseModelList(*models)
+		if err != nil {
+			return err
+		}
+		if choices, err = m.modelChoices(ids); err != nil {
+			return err
+		}
+	} else if err := m.check(); err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -300,6 +318,9 @@ func serve(args []string) error {
 		Config:      m.gameConfig(w),
 		MoveTimeout: *moveTimeout,
 		Script:      strings.FieldsFunc(*script, func(r rune) bool { return r == ',' || r == ' ' }),
+		Models:      choices, DefaultModel: *defaultModel,
+		Exclusive: *exclusive, MaxGamesPerHour: *perHour, MaxGamesPerDay: *perDay,
+		IdleTimeout: *idle, GameTokenBudget: *tokenBudget,
 	})
 	if err != nil {
 		return err
@@ -308,8 +329,19 @@ func serve(args []string) error {
 
 	warnIfExposed(*addr)
 	opts.Live, opts.TraceDelay, opts.Ctx = lv, *traceDelay, ctx
+	info := lv.Info()
 	log.Printf("human mode: %s/%s, move timeout %s, grader depth %d, recording to %s/",
-		m.providerName(), m.modelName(), *moveTimeout, *m.depth, *data)
+		info.Provider, info.Model, *moveTimeout, *m.depth, *data)
+	if len(info.Models) > 1 {
+		for _, mi := range info.Models {
+			log.Printf("  model option %s: %s/%s", mi.ID, mi.Provider, mi.Model)
+		}
+		log.Printf("  default model option: %s", info.DefaultModel)
+	}
+	if *exclusive || *perHour > 0 || *perDay > 0 || *idle > 0 || *tokenBudget > 0 {
+		log.Printf("limits: exclusive=%t, per hour %d, per day %d, idle timeout %s, token budget %d (0 = off)",
+			*exclusive, *perHour, *perDay, *idle, *tokenBudget)
+	}
 	return web.Serve(opts)
 }
 

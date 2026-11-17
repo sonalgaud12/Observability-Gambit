@@ -60,6 +60,10 @@ const (
 	// Set when the per-move deadline cut the agent off and a random legal
 	// move was played in its place (live games only).
 	GambitTimedOut = attribute.Key("gambit.timed_out")
+	// Who played a human-mode game: a short label the front proxy attached
+	// to the request (one per passcode), for attributing plays. Never the
+	// passcode itself.
+	GambitPlayerLabel = attribute.Key("gambit.player.label")
 )
 
 // --- Domain: the chess game -------------------------------------------------

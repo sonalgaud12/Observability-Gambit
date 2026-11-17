@@ -104,6 +104,7 @@ func newServer(o Options) (*server, http.Handler, error) {
 	sub, _ := fs.Sub(static, "static")
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/api/config", s.config)
 	mux.HandleFunc("/api/games", s.listGames)
 	mux.HandleFunc("/api/game", s.game)
@@ -125,6 +126,18 @@ func (s *server) addGame(g dataset.GameRecord, moves []dataset.MoveRecord) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+// healthz is the uptime check: 200 while the process is serving and, in human
+// mode, the engines are up.
+func (s *server) healthz(w http.ResponseWriter, _ *http.Request) {
+	if s.opts.Live != nil && !s.opts.Live.Healthy() {
+		http.Error(w, "engines down", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	fmt.Fprintln(w, "ok")
 }
 
 func (s *server) config(w http.ResponseWriter, _ *http.Request) {

@@ -114,6 +114,7 @@
     <div id="status" class="status" role="status" aria-live="polite"></div>
     <div class="controls">
       <select id="color" aria-label="Your colour"><option value="white">Play white</option><option value="black">Play black</option></select>
+      <select id="model" aria-label="Which model you play against" hidden></select>
       <button id="newGame" class="primary">New game</button>
       <button id="resign" class="danger" disabled>Resign</button>
       <button id="scripted" disabled></button>
@@ -157,7 +158,18 @@ async function init() {
     $("#newGame").disabled = true; $("#color").disabled = true; $("#script").disabled = true;
     renderBoard(); return;
   }
-  $("#modelBadge").textContent = `${live.info.provider} / ${live.info.model}`;
+  const models = live.info.models || [];
+  if (models.length > 1) {
+    // A shared deployment offers an allow-list: the player picks the opponent per game.
+    const sel = $("#model");
+    sel.innerHTML = models.map(m => `<option value="${esc(m.id)}">Play against ${esc(m.label)}</option>`).join("");
+    sel.value = live.info.default_model;
+    sel.hidden = false;
+    const tip = () => { const m = models.find(x => x.id === sel.value); $("#modelBadge").textContent = m ? `${m.provider} / ${m.model}` : ""; };
+    sel.addEventListener("change", tip); tip();
+  } else {
+    $("#modelBadge").textContent = `${live.info.provider} / ${live.info.model}`;
+  }
   if (live.info.mock) $("#mockBadge").hidden = false;
   $("#script").value = (live.info.script || []).join(" ");
   const q = new URLSearchParams(location.search);
@@ -180,9 +192,14 @@ async function newGame() {
   const tokens = $("#script").value.split(/[\s,]+/).filter(Boolean);
   $("#newGame").disabled = true;
   try {
-    const j = await api("api/live/new", { human_color: $("#color").value, script: tokens });
+    const body = { human_color: $("#color").value, script: tokens };
+    if (!$("#model").hidden) body.model = $("#model").value;
+    const j = await api("api/live/new", body);
     connect(j.id);
-  } catch (e) { toast("Could not start a game: " + e.message); }
+  } catch (e) {
+    // 409: someone else is playing (the server is exclusive); 429: a game limit is used up.
+    toast(e.status === 409 ? "Someone is playing right now. Try again when their game ends." : "Could not start a game: " + e.message);
+  }
   $("#newGame").disabled = false;
 }
 
@@ -208,6 +225,7 @@ function showConn(msg) { const c = $("#conn"); c.hidden = !msg; c.textContent = 
 function handle(type, d) {
   switch (type) {
     case "game_started":
+      S.model = d.model_label || d.model; $("#modelBadge").textContent = `${d.provider} / ${d.model}`;
       S.humanColor = d.human_color; S.agentColor = d.agent_color; S.fen = d.start_fen; S.timeoutMS = d.move_timeout_ms;
       $("#color").value = d.human_color;
       break;
@@ -375,7 +393,7 @@ function renderPanel() {
   if (!S.id) { p.innerHTML = `<div class="muted">Play the agent. Every move it makes is a trace: latency, tokens, tool calls and retries, graded by Stockfish.</div>`; return; }
   if (S.thinking) {
     const t = S.thinking;
-    p.innerHTML = `<div class="movehead"><div class="san">Move ${Math.ceil(t.ply / 2)}${t.ply % 2 === 0 ? "…" : "."}</div><span class="who">agent · ${esc(live.info.model)}</span></div>
+    p.innerHTML = `<div class="movehead"><div class="san">Move ${Math.ceil(t.ply / 2)}${t.ply % 2 === 0 ? "…" : "."}</div><span class="who">agent · ${esc(S.model || live.info.model)}</span></div>
       <div class="clock" id="clock">0.0s</div>
       <div class="bar" id="bar"><i></i></div>
       <div class="chips" id="liveChips"></div>
@@ -391,7 +409,7 @@ function renderPanel() {
   const g = a.grade;
   let h = `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${esc(a.san)}</div>
     ${g ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
-    <span class="who">agent · ${esc(live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
+    <span class="who">agent · ${esc(S.model || live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
   if (a.timed_out) h += `<div class="callout bad"><b>Timed out.</b> The agent did not answer within ${(S.timeoutMS / 1000).toFixed(0)}s, so a random legal move was played. The trace is flagged <code>error.type=timeout</code>.</div>`;
   else if (a.fallback) h += `<div class="callout"><b>Fallback move.</b> The agent never produced a legal move, so a random one was played.</div>`;
   if (g && ["mistake", "blunder", "inaccuracy"].includes(g.class)) {

@@ -15,7 +15,7 @@ import (
 
 // Human-mode API. A game is a session; the UI follows its event log.
 //
-//	POST /api/live/new      {human_color?, script?}  start a game, abandoning any running one
+//	POST /api/live/new      {human_color?, script?, model?}  start a game (409 if the server is exclusive and one is running; 429 over the game limits)
 //	POST /api/live/move     {id, move}               play the human's move (UCI "e2e4"/"e7e8q" or SAN)
 //	POST /api/live/resign   {id}
 //	GET  /api/live/events   ?id=                     server-sent events; resumes from Last-Event-ID
@@ -29,6 +29,28 @@ func (s *server) liveRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "live.html", http.StatusFound)
 	})
+}
+
+// UserHeader is the request header a front proxy (Caddy) sets to the name of
+// the passcode that authenticated the request. Its value labels the games a
+// person plays; it is not a secret and the passcode never appears in it.
+const UserHeader = "X-Gambit-User"
+
+// playerLabel cleans a proxy-supplied label: letters, digits and . _ - @ only,
+// at most 40 characters. Anything else is dropped, so a label can never carry
+// markup or inject into a log line.
+func playerLabel(v string) string {
+	out := make([]rune, 0, len(v))
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-', r == '@':
+			out = append(out, r)
+		}
+		if len(out) == 40 {
+			break
+		}
+	}
+	return string(out)
 }
 
 type apiError struct {
@@ -66,13 +88,25 @@ func (s *server) liveNew(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		HumanColor string   `json:"human_color"`
 		Script     []string `json:"script"`
+		Model      string   `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		fail(w, http.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	sess, err := s.opts.Live.Start(game.StartOptions{HumanColor: req.HumanColor, Script: req.Script})
-	if err != nil {
+	player := playerLabel(r.Header.Get(UserHeader))
+	sess, err := s.opts.Live.Start(game.StartOptions{
+		HumanColor: req.HumanColor, Script: req.Script, Model: req.Model, Player: player,
+	})
+	switch {
+	case errors.Is(err, game.ErrGameInProgress):
+		fail(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, game.ErrRateLimited):
+		w.Header().Set("Retry-After", "60")
+		fail(w, http.StatusTooManyRequests, err.Error())
+		return
+	case err != nil:
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}

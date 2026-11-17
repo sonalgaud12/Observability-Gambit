@@ -19,6 +19,13 @@ type OpenAICompatible struct {
 	APIKey       string
 	ProviderName string // gen_ai.provider.name, e.g. "openai", "ollama"
 	HTTP         *http.Client
+
+	// ReasoningEffort, if set, is sent as `reasoning_effort`. OpenAI's GPT-6
+	// models only allow function calling on Chat Completions with "none".
+	ReasoningEffort string
+	// MaxCompletionTokens sends the output cap as `max_completion_tokens`
+	// instead of `max_tokens`, which OpenAI's reasoning-capable models require.
+	MaxCompletionTokens bool
 }
 
 // NewOpenAICompatible returns a client with sane defaults.
@@ -63,6 +70,9 @@ type oaRequest struct {
 	Tools       []oaTool    `json:"tools,omitempty"`
 	Temperature *float64    `json:"temperature,omitempty"`
 	MaxTokens   int         `json:"max_tokens,omitempty"`
+
+	MaxCompletionTokens int    `json:"max_completion_tokens,omitempty"`
+	ReasoningEffort     string `json:"reasoning_effort,omitempty"`
 }
 
 type oaResponse struct {
@@ -95,7 +105,10 @@ func (e *HTTPError) Error() string { return fmt.Sprintf("llm http %d: %s", e.Sta
 
 // Chat implements Client.
 func (c *OpenAICompatible) Chat(ctx context.Context, req Request) (Response, error) {
-	body := oaRequest{Model: req.Model, MaxTokens: req.MaxTokens}
+	body := oaRequest{Model: req.Model, MaxTokens: req.MaxTokens, ReasoningEffort: c.ReasoningEffort}
+	if c.MaxCompletionTokens {
+		body.MaxTokens, body.MaxCompletionTokens = 0, req.MaxTokens
+	}
 	if req.Temperature >= 0 {
 		t := req.Temperature
 		body.Temperature = &t
