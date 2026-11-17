@@ -214,6 +214,21 @@ model is `--agent-model` here because `--model` is the analysis bundle.
 | `--trace-delay` | 20s | How long after a move is graded its "Open trace" link is offered (see below). |
 | `--grader-depth` | 14 | Same label as batch games. |
 
+For a shared deployment (see [`deploy/gcp/README.md`](deploy/gcp/README.md)) there are more
+flags. All are off by default, so on a laptop nothing changes:
+
+| Flag | What it does |
+|---|---|
+| `--models haiku-5.5,luna-6` | Offer exactly these models; the player picks one per game on the start screen. The first is the default (`--default-model`). Each needs its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and replaces `--agent-model`, `--base-url`, `--provider`. |
+| `--exclusive` | A new game while one is running gets HTTP 409 instead of abandoning it. |
+| `--max-games-per-hour`, `--max-games-per-day` | Cap game starts; beyond it HTTP 429. |
+| `--idle-timeout` | End a game whose human has not moved for this long. |
+| `--game-token-budget` | End a game once the agent used this many input+output tokens. |
+
+`GET /healthz` answers `ok` (for uptime checks). A reverse proxy that authenticates players can pass
+the name in an `X-Gambit-User` header; it becomes `gambit.player.label` on that game's traces and
+`player` in `games.jsonl`.
+
 ### On stage
 
 1. Start with `make live` (or `live-mock`). Press **New game**, pick a colour.
@@ -291,7 +306,7 @@ The page is a thin client over a small API, so a rehearsal can also be scripted:
 
 | | |
 |---|---|
-| `POST /api/live/new` `{"human_color":"white","script":["e4"]}` | start a game (abandons a running one); returns `{"id"}` |
+| `POST /api/live/new` `{"human_color":"white","script":["e4"],"model":"luna-6"}` | start a game (abandons a running one, or 409 with `--exclusive`; 429 over the game limits; `model` only with `--models`); returns `{"id"}` |
 | `POST /api/live/move` `{"id","move"}` | the human's move, UCI (`e2e4`, `e7e8q`) or SAN; 422 if illegal, 409 if it is not their turn |
 | `POST /api/live/resign` `{"id"}` | |
 | `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `agent_graded`, `game_over`, `game_saved`, `notice`, `error` |
@@ -343,6 +358,7 @@ internal/semconv/        every attribute key in one place
 internal/otlpjson/       cut one game's traces out of a recording
 collector/               Collector pipeline + replay config
 deploy/                  Prometheus, Grafana (datasources, dashboard), ClickHouse init
+deploy/gcp/              the cloud play deployment: compose override, Caddy, passcodes, VM scripts, runbook
 sql/correlation.sql      the label ⨝ trace join in pure SQL
 ```
 

@@ -1,0 +1,113 @@
+# Production override for the cloud play deployment (see deploy/gcp/README.md).
+#
+# Layered on the local stack and its Grafana Cloud route:
+#
+#   docker compose --env-file /etc/gambit/gambit.env --env-file /run/gambit/env \
+#     -f docker-compose.yaml -f docker-compose.cloud.yaml -f deploy/gcp/docker-compose.prod.yaml up -d --build
+#
+# (`make up-prod` does the same from .env.prod; systemd does it on the VM.)
+#
+# What it changes: adds the game server and Caddy; binds every OSS service port
+# to 127.0.0.1 so only Caddy (80/443) is reachable; turns Grafana's anonymous
+# role from Admin to Viewer; rotates container logs; restarts on reboot.
+#
+# Needs: GAMBIT_DOMAIN, the Grafana Cloud variables from docker-compose.cloud.yaml,
+# and the model keys (OPENAI_API_KEY, ANTHROPIC_API_KEY). With GAMBIT_EXTRA_ARGS=--mock
+# the keys are not needed and no model is called.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  otel-collector:
+    ports: !override
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8889:8889"
+      - "127.0.0.1:13133:13133"
+    environment:
+      GAMBIT_RUN: ${GAMBIT_RUN:-cloud}
+      GAMBIT_MODEL: ${GAMBIT_MODEL:-multi} # chosen per game: see gen_ai.request.model on each trace
+    restart: unless-stopped
+    logging: *logging
+
+  jaeger:
+    ports: !override
+      - "127.0.0.1:16686:16686"
+    restart: unless-stopped
+    logging: *logging
+
+  clickhouse:
+    ports: !override
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
+    restart: unless-stopped
+    logging: *logging
+
+  prometheus:
+    ports: !override
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    logging: *logging
+
+  grafana:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+    environment:
+      # The base file runs anonymous as Admin: fine on a laptop, never on a public host.
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SERVER_ROOT_URL: https://dash.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}
+    restart: unless-stopped
+    logging: *logging
+
+  # The game server: stage UI plus human mode. Reached only through Caddy.
+  gambit:
+    build: .
+    # sh -c so GAMBIT_EXTRA_ARGS (for example --mock) can be added from the env file.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        exec gambit serve --live --addr 0.0.0.0:8080 --data /app/data
+        --models ${GAMBIT_MODELS:-haiku-5.5,luna-6}
+        --default-model ${GAMBIT_DEFAULT_MODEL:-haiku-5.5}
+        --exclusive
+        --max-games-per-hour ${GAMBIT_MAX_GAMES_PER_HOUR:-12}
+        --max-games-per-day ${GAMBIT_MAX_GAMES_PER_DAY:-150}
+        --idle-timeout ${GAMBIT_IDLE_TIMEOUT:-3m}
+        --game-token-budget ${GAMBIT_GAME_TOKEN_BUDGET:-300000}
+        --move-timeout 15s
+        --trace-url "https://trace.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}/trace/{trace_id}"
+        $${GAMBIT_EXTRA_ARGS:-}
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      GAMBIT_EXTRA_ARGS: ${GAMBIT_EXTRA_ARGS:-}
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8080:8080" # for ssh port-forward debugging; not public
+    depends_on: [otel-collector]
+    restart: unless-stopped
+    logging: *logging
+
+  # HTTPS (Let's Encrypt), passcodes, and the reverse proxy to everything above.
+  caddy:
+    image: caddy:2.8
+    ports:
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
+    environment:
+      GAMBIT_DOMAIN: ${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}
+    volumes:
+      - ./deploy/gcp/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${GAMBIT_AUTH_DIR:-/run/gambit/caddy}:/etc/caddy/auth:ro # users.caddy: one name + bcrypt hash per passcode
+      - caddy-data:/data
+    depends_on: [gambit, jaeger, grafana]
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  caddy-data:

@@ -1,0 +1,63 @@
+# Caddy for the cloud play deployment. One passcode per person or campaign:
+# deploy/gcp/rotate-passcode.sh adds, rotates and removes them, and
+# fetch-secrets.sh renders them into /etc/caddy/auth/users.caddy as
+#
+#   basic_auth {
+#       <name> <bcrypt hash>
+#   }
+#
+# The name is the username people type. Caddy logs it (user_id) with every
+# request and passes it to the game as X-Gambit-User, which labels each game's
+# traces. The passcode itself is never logged (Caddy redacts Authorization).
+#
+# GAMBIT_DOMAIN gambit.example.org serves gambit.example.org,
+# trace.gambit.example.org and dash.gambit.example.org. A name ending in
+# .localhost gets Caddy's own local certificate: that is how the stack is
+# tested on a laptop.
+
+(log_requests) {
+	log {
+		output stdout
+		format json
+	}
+}
+
+# The game: stage UI, human mode, the SSE stream.
+{$GAMBIT_DOMAIN} {
+	import log_requests
+
+	# Uptime check: no passcode, answered by the game server itself.
+	handle /healthz {
+		reverse_proxy gambit:8080
+	}
+
+	handle {
+		import /etc/caddy/auth/users.caddy
+		reverse_proxy gambit:8080 {
+			# Always overwrite: a client can never choose its own label.
+			header_up X-Gambit-User {http.auth.user.id}
+			# The passcode stops at the proxy.
+			header_up -Authorization
+			# Stream server-sent events as they are written.
+			flush_interval -1
+		}
+	}
+}
+
+# The "Open trace" links in the game land here.
+trace.{$GAMBIT_DOMAIN} {
+	import log_requests
+	import /etc/caddy/auth/users.caddy
+	reverse_proxy jaeger:16686 {
+		header_up -Authorization
+	}
+}
+
+# Dashboards (Grafana's anonymous role is Viewer; the passcode decides who gets there).
+dash.{$GAMBIT_DOMAIN} {
+	import log_requests
+	import /etc/caddy/auth/users.caddy
+	reverse_proxy grafana:3000 {
+		header_up -Authorization
+	}
+}
