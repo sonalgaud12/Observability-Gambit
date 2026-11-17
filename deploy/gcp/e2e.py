@@ -23,7 +23,7 @@ def check(name, cond, extra=""):
 
 def req(user, method, path, body=None, host=HOST, headers=None):
     c = http.client.HTTPSConnection(host, PORT, context=CTX, timeout=30)
-    h = {"Content-Type": "application/json", "Origin": f"https://{HOST}:{PORT}"}
+    h = {"Content-Type": "application/json", "Origin": "https://" + HOST + ("" if PORT == 443 else f":{PORT}")}
     if user:
         h["Authorization"] = "Basic " + base64.b64encode(f"{user}:{PASS[user]}".encode()).decode()
     h.update(headers or {})
