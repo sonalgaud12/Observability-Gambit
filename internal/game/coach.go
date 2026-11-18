@@ -34,8 +34,10 @@ import (
 // The coach is off the game's critical path: it runs in its own goroutine after
 // the move has been graded, with its own timeout, and any failure (timeout,
 // error, budget, an unreadable answer) only means there is no comment. It uses
-// the same model and client as the game's agent, and a token allowance of its own (half the game's budget, counted apart from the agent's, so coaching never ends a game), and is traced as
-// its own agent, "coach", in the same gen_ai.conversation.id as the player.
+// the same model and client as the game's agent, and a token allowance of its
+// own (half the game's budget, counted apart from the agent's, so coaching
+// never ends a game), and is traced as its own agent, "coach", in the same
+// gen_ai.conversation.id as the player.
 
 // CoachAgentName is the gen_ai.agent.name of the coach, as distinct from the
 // player's agent.Name.
