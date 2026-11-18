@@ -421,9 +421,10 @@ type Session struct {
 
 	coach *coachState // nil when the coach is off
 
-	usageMu     sync.Mutex
-	tokensUsed  int // the agent's and the coach's model tokens, against the game's budget
-	coachTokens int // the coach's share of tokensUsed
+	usageMu       sync.Mutex
+	tokensUsed    int // the agent's model tokens: the only ones that end a game
+	coachTokens   int // the coach's settled tokens, against its own allowance
+	coachReserved int // worst-case tokens set aside for coach calls in flight
 }
 
 // Submit plays the human's move. It is rejected, and the game keeps waiting,
@@ -552,7 +553,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 				},
 				decided: func(d decision) {
 					st := d.Stats
-					s.addTokens(st.InputTokens+st.OutputTokens, false)
+					s.addTokens(st.InputTokens + st.OutputTokens)
 					s.emit("agent_moved", map[string]any{
 						"ply": d.Ply, "move_number": d.MoveNumber, "color": d.Color,
 						"san": d.SAN, "uci": d.UCI, "fen_after": d.FENAfter, "trace_id": d.TraceID,

@@ -259,31 +259,48 @@ func TestCoachTimeoutDoesNotBlockTheGame(t *testing.T) {
 	}
 }
 
-// Coach tokens count against the game's budget, but only up to half of it.
-func TestCoachSharesTheTokenBudget(t *testing.T) {
-	sc := &splitClient{coachText: "Good start. The pawn opens lines for your bishop and queen.", coachIn: 120, coachOut: 30}
-	f := coachFixture(t, sc, fakeGrader{}, func(c *LiveConfig) { c.GameTokenBudget = 160 })
+// Coach tokens are kept apart from the agent's: they never end a game, and the
+// coach stops at its own allowance (half the budget).
+func TestCoachUsageNeverEndsAGame(t *testing.T) {
+	sc := &splitClient{coachText: "Good start. The pawn opens lines for your bishop and queen.", coachIn: 2000, coachOut: 30}
+	f := coachFixture(t, sc, fakeGrader{}, func(c *LiveConfig) { c.GameTokenBudget = 2400 })
 	s, _ := f.live.Start(StartOptions{})
 	turn := playE4(t, s)
 	waitFor(t, s, 0, "coach_comment", nil)
-	used, coach := s.tokenCounts()
-	if coach != 150 {
-		t.Errorf("coach tokens = %d, want 150", coach)
-	}
 	moved := waitFor(t, s, turn.ID, "agent_moved", nil)
 	waitFor(t, s, moved.ID, "agent_graded", nil)
-	used, coach = s.tokenCounts()
-	if used < coach+13 {
-		t.Errorf("used = %d, coach = %d: the agent's tokens are not counted with the coach's", used, coach)
+	used, coach := s.tokenCounts()
+	if coach != 2030 {
+		t.Errorf("coach tokens = %d, want 2030", coach)
 	}
-	// 150 tokens is more than half of the 160-token budget: no more coaching.
+	if used >= 2400/2 || used < 13 {
+		t.Errorf("agent tokens = %d: the coach's tokens must not be counted with them", used)
+	}
 	if err := s.AskCoach(2); !errors.Is(err, ErrCoachBudget) {
-		t.Errorf("AskCoach over budget: %v", err)
+		t.Errorf("AskCoach over its allowance: %v", err)
 	}
 	if n := len(sc.requests()); n != 1 {
 		t.Errorf("coach model calls = %d, want 1", n)
 	}
-	// The coach never ends a game on its own: this one ends at the agent's next move.
+	// The coach is far over its allowance, yet the game goes on: only the agent's
+	// tokens decide when it ends.
+	next := waitFor(t, s, moved.ID, "human_turn", nil)
+	s.Submit("d2d4")
+	waitFor(t, s, next.ID, "agent_moved", nil)
+	for _, ty := range types(s) {
+		if ty == "game_over" {
+			t.Error("the coach's tokens ended the game")
+		}
+	}
+}
+
+// The agent's own tokens still end a game at the budget.
+func TestAgentTokensStillEndAGame(t *testing.T) {
+	sc := &splitClient{coachText: "Fine.", coachIn: 1, coachOut: 1}
+	f := coachFixture(t, sc, fakeGrader{}, func(c *LiveConfig) { c.GameTokenBudget = 13 })
+	s, _ := f.live.Start(StartOptions{})
+	turn := playE4(t, s)
+	moved := waitFor(t, s, turn.ID, "agent_moved", nil)
 	next := waitFor(t, s, moved.ID, "human_turn", nil)
 	s.Submit("d2d4")
 	over := waitFor(t, s, next.ID, "game_over", nil)
@@ -291,6 +308,35 @@ func TestCoachSharesTheTokenBudget(t *testing.T) {
 		t.Errorf("game_over = %v", over.data)
 	}
 	<-s.Done()
+}
+
+// Calls in flight together cannot take the coach past its allowance.
+func TestCoachConcurrentCallsStayWithinAllowance(t *testing.T) {
+	sc := &splitClient{coachText: "Fine."}
+	f := coachFixture(t, sc, fakeGrader{}, func(c *LiveConfig) { c.GameTokenBudget = 3000 })
+	s, _ := f.live.Start(StartOptions{})
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	granted := 0
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if s.coachReserve(400) {
+				mu.Lock()
+				granted++
+				mu.Unlock()
+			}
+		}()
+	}
+	wg.Wait()
+	if granted != 3 { // 3 x 400 fits the 1500 allowance, a 4th does not
+		t.Errorf("granted %d reservations of 400 against an allowance of 1500, want 3", granted)
+	}
+	s.coachSettle(400, 100)
+	if !s.coachReserve(400) {
+		t.Error("a settled call's unused reservation was not released")
+	}
 }
 
 // The coach is its own agent in the game's conversation.

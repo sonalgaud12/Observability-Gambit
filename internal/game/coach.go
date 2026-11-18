@@ -34,7 +34,7 @@ import (
 // The coach is off the game's critical path: it runs in its own goroutine after
 // the move has been graded, with its own timeout, and any failure (timeout,
 // error, budget, an unreadable answer) only means there is no comment. It uses
-// the same model, client and token budget as the game's agent, and is traced as
+// the same model and client as the game's agent, and a token allowance of its own (half the game's budget, counted apart from the agent's, so coaching never ends a game), and is traced as
 // its own agent, "coach", in the same gen_ai.conversation.id as the player.
 
 // CoachAgentName is the gen_ai.agent.name of the coach, as distinct from the
@@ -52,7 +52,7 @@ const (
 	coachTimeout       = 25 * time.Second // per call, retries excluded (there are none)
 	coachMaxInFlight   = 2                // concurrent coach calls per game
 	coachMaxChars      = 700              // longer answers are cut at a sentence
-	coachBudgetDivisor = 2                // the coach may use at most budget/2, so the game keeps room to play
+	coachBudgetDivisor = 2                // the coach has its own allowance of budget/2, apart from the agent's
 )
 
 // Errors returned by AskCoach.
@@ -64,7 +64,7 @@ var (
 	// ErrNotGraded: Stockfish has not finished checking the move, and the coach
 	// only speaks from its verdict.
 	ErrNotGraded = errors.New("Stockfish is still checking that move; try again in a moment")
-	// ErrCoachBudget: the coach has used its share of the game's token budget.
+	// ErrCoachBudget: the coach has used its own token allowance for this game.
 	ErrCoachBudget = errors.New("the coach has used its share of this game's token budget")
 	// ErrCoachBusy: the coach is already answering other questions.
 	ErrCoachBusy = errors.New("the coach is busy answering; try again in a moment")
@@ -136,32 +136,58 @@ func (s *Session) rememberGrade(ply int, gr Grade) {
 	s.coach.mu.Unlock()
 }
 
-// addTokens counts model tokens against the game's budget; coach says whether
-// they were the coach's.
-func (s *Session) addTokens(n int, coach bool) {
+// addTokens counts the agent's model tokens against the game's budget. Only
+// these end a game; the coach's tokens are kept apart (see coachReserve).
+func (s *Session) addTokens(n int) {
 	s.usageMu.Lock()
 	s.tokensUsed += n
-	if coach {
-		s.coachTokens += n
-	}
 	s.usageMu.Unlock()
 }
 
+// tokenCounts returns the agent's tokens and the coach's settled tokens.
 func (s *Session) tokenCounts() (used, coach int) {
 	s.usageMu.Lock()
 	defer s.usageMu.Unlock()
 	return s.tokensUsed, s.coachTokens
 }
 
-// coachWithinBudget: the game's budget is shared with the agent, and the coach
-// may spend at most half of it, so that coaching can never be what ends a game.
-func (s *Session) coachWithinBudget() bool {
+// coachReserve sets aside n tokens for a coach call about to start, unless that
+// would take the coach past its own allowance, budget/coachBudgetDivisor. The
+// allowance is separate from the agent's budget, so coaching never ends a game;
+// when it is spent the coach just stops. Reserving before the call (and
+// settling afterwards) keeps calls in flight together from overshooting it.
+func (s *Session) coachReserve(n int) bool {
 	b := s.live.cfg.GameTokenBudget
 	if b <= 0 {
 		return true
 	}
-	used, coach := s.tokenCounts()
-	return used < b && coach < b/coachBudgetDivisor
+	s.usageMu.Lock()
+	defer s.usageMu.Unlock()
+	if s.coachTokens+s.coachReserved+n > b/coachBudgetDivisor {
+		return false
+	}
+	s.coachReserved += n
+	return true
+}
+
+// coachSettle replaces a call's reservation with the tokens it really used.
+func (s *Session) coachSettle(reserved, actual int) {
+	s.usageMu.Lock()
+	if s.live.cfg.GameTokenBudget > 0 {
+		s.coachReserved -= reserved
+	}
+	s.coachTokens += actual
+	s.usageMu.Unlock()
+}
+
+// coachReservation is the worst case for one call: the longest reply plus the
+// prompt, estimated at three characters a token.
+func coachReservation(f plyFacts, kind string) int {
+	n := coachMaxTokens
+	for _, m := range coachMessages(f, kind) {
+		n += len(m.Content)/3 + 1
+	}
+	return n
 }
 
 // AskCoach answers "Ask the coach why" for a move: the answer arrives as a
@@ -185,26 +211,20 @@ func (s *Session) AskCoach(ply int) error {
 		return nil
 	}
 	c.mu.Unlock()
-	if !s.coachWithinBudget() {
-		return ErrCoachBudget
-	}
-	if !s.startCoach(ply, CoachWhy, true) {
-		return ErrCoachBusy
-	}
-	return nil
+	return s.startCoach(ply, CoachWhy, true)
 }
 
 func coachKey(kind string, ply int) string { return fmt.Sprintf("%s:%d", kind, ply) }
 
 // startCoach runs a coach call in the background, unless one for the same move
-// and kind has run, the coach is at its concurrency limit, or the budget is
-// spent. It reports whether the call was started (or had already been).
-func (s *Session) startCoach(ply int, kind string, explicit bool) bool {
+// and kind has run (nil: nothing to do), the coach is at its concurrency limit
+// (ErrCoachBusy) or its token allowance is spent (ErrCoachBudget).
+func (s *Session) startCoach(ply int, kind string, explicit bool) error {
 	c := s.coach
 	select {
 	case c.sem <- struct{}{}:
 	default:
-		return false
+		return ErrCoachBusy
 	}
 	c.mu.Lock()
 	key := coachKey(kind, ply)
@@ -213,37 +233,46 @@ func (s *Session) startCoach(ply int, kind string, explicit bool) bool {
 		again := f != nil && c.started[key]
 		c.mu.Unlock()
 		<-c.sem
-		return again
+		if again {
+			return nil
+		}
+		return ErrUnknownPly
+	}
+	facts := *f
+	reserved := coachReservation(facts, kind)
+	if !s.coachReserve(reserved) {
+		c.mu.Unlock()
+		<-c.sem
+		return ErrCoachBudget
 	}
 	c.started[key] = true
-	facts := *f
 	c.mu.Unlock()
 
 	go func() {
 		defer func() { <-c.sem }()
-		s.runCoach(ply, kind, facts, explicit)
+		s.runCoach(ply, kind, facts, explicit, reserved)
 	}()
-	return true
+	return nil
 }
 
 // coachAfterHumanGrade is called once the human's move has its grade: the
 // automatic comment. It never blocks and never reports a failure to the player.
 func (s *Session) coachAfterHumanGrade(ply int) {
-	if !s.coachOn() || !s.coachWithinBudget() {
+	if !s.coachOn() {
 		return
 	}
 	s.startCoach(ply, CoachComment, false)
 }
 
 // runCoach makes one traced coach call and publishes the answer.
-func (s *Session) runCoach(ply int, kind string, f plyFacts, explicit bool) {
+func (s *Session) runCoach(ply int, kind string, f plyFacts, explicit bool, reserved int) {
 	c := s.coach
 	ctx, cancel := context.WithTimeout(c.ctx, coachTimeout)
 	defer cancel()
 	s.emit("coach_thinking", map[string]any{"ply": ply, "kind": kind})
 
 	text, st, err := s.askCoachModel(ctx, ply, kind, f)
-	s.addTokens(st.in+st.out, true)
+	s.coachSettle(reserved, st.in+st.out)
 	if err != nil {
 		// A failed comment is simply absent; a failed "why" says so, once.
 		reason := "error"

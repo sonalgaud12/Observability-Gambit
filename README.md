@@ -223,7 +223,7 @@ flags. All are off by default, so on a laptop nothing changes:
 | `--exclusive` | A new game while one is running gets HTTP 409 instead of abandoning it. |
 | `--max-games-per-hour`, `--max-games-per-day` | Cap game starts; beyond it HTTP 429 with a `Retry-After` header. |
 | `--idle-timeout` | End a game whose human has not moved for this long. |
-| `--game-token-budget` | End a game once the agent used this many input+output tokens. The coach's tokens count too, up to half of it. |
+| `--game-token-budget` | End a game once the agent used this many input+output tokens. The coach has its own allowance of half that, counted apart, so it never ends a game. |
 | `--no-coach` | Turn the coach off. |
 
 `GET /healthz` answers `ok` (for uptime checks). A reverse proxy that authenticates players can pass
@@ -330,8 +330,10 @@ in plain words, in addition to the grade and the rule-based reason above.
   (`Nf3`, `exd5`, `O-O`) is thrown away.
 - It is off the critical path. A coach error, timeout (25s) or unreadable
   answer only means no comment; the board and the game never wait for it.
-- Its tokens count against `--game-token-budget`, but it may use at most half
-  of it, so coaching cannot be what ends a game. `--no-coach` turns it off.
+- Its tokens do not count toward ending a game: `--game-token-budget` is checked
+  against the agent's tokens only. The coach has its own allowance of half the
+  budget (worst case reserved before each call), and when that is spent it just
+  stops commenting. `--no-coach` turns it off.
 - In traces it is its own agent in the game's `gen_ai.conversation.id`: a
   separate `chess.coach` trace per call holding `invoke_agent coach`
   (`gen_ai.agent.name=coach`, `gambit.coach.kind` = `comment` or `why`,
