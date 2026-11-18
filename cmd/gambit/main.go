@@ -280,6 +280,7 @@ func serve(args []string) error {
 	perDay := fs.Int("max-games-per-day", 0, "live: games that may start per rolling 24 hours (0 = no limit)")
 	idle := fs.Duration("idle-timeout", 0, "live: end a game whose human has not moved for this long (0 = never)")
 	tokenBudget := fs.Int("game-token-budget", 0, "live: end a game once the agent has used this many input+output tokens (0 = no limit)")
+	noCoach := fs.Bool("no-coach", false, "live: turn the chess coach off (by default a model call comments on each of the human's moves, and any move can be explained on request; it uses the game's model and has its own token allowance of half --game-token-budget)")
 	fs.Parse(args)
 
 	opts := web.Options{Addr: *addr, DataDir: *data, ModelPath: *model, TraceURL: *traceURL}
@@ -320,7 +321,7 @@ func serve(args []string) error {
 		Script:      strings.FieldsFunc(*script, func(r rune) bool { return r == ',' || r == ' ' }),
 		Models:      choices, DefaultModel: *defaultModel,
 		Exclusive: *exclusive, MaxGamesPerHour: *perHour, MaxGamesPerDay: *perDay,
-		IdleTimeout: *idle, GameTokenBudget: *tokenBudget,
+		IdleTimeout: *idle, GameTokenBudget: *tokenBudget, NoCoach: *noCoach,
 	})
 	if err != nil {
 		return err

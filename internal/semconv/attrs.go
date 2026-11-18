@@ -64,6 +64,11 @@ const (
 	// to the request (one per passcode), for attributing plays. Never the
 	// passcode itself.
 	GambitPlayerLabel = attribute.Key("gambit.player.label")
+	// What a human-mode coach call was for: "comment" (the automatic remark
+	// after the human's move) or "why" (the player pressed "Ask the coach why").
+	GambitCoachKind = attribute.Key("gambit.coach.kind")
+	// Whose move the coach was talking about: "human" or "agent".
+	GambitCoachSubject = attribute.Key("gambit.coach.subject")
 )
 
 // --- Domain: the chess game -------------------------------------------------

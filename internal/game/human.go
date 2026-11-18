@@ -67,5 +67,8 @@ func (s *Session) gradeHuman(ctx context.Context, before *chess.Position, mv *ch
 	if note, ok := Coach(before, mv, gr, true); ok {
 		ev["coach"] = note
 	}
+	s.rememberGrade(ply, gr)
 	s.emit("human_graded", ev)
+	// The coach comments once the grade is out, off the game's critical path.
+	s.coachAfterHumanGrade(ply)
 }

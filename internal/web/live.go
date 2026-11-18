@@ -19,12 +19,14 @@ import (
 //	POST /api/live/new      {human_color?, script?, model?}  start a game (409 if the server is exclusive and one is running; 429 over the game limits)
 //	POST /api/live/move     {id, move}               play the human's move (UCI "e2e4"/"e7e8q" or SAN)
 //	POST /api/live/resign   {id}
+//	POST /api/live/coach    {id, ply}                "Ask the coach why" on any move; the answer is a coach_comment event (404 off/unknown move, 409 not graded yet or budget used, 429 busy)
 //	GET  /api/live/events   ?id=                     server-sent events; resumes from Last-Event-ID
 //	GET  /api/live/state    ?id=                     the whole event log as JSON
 func (s *server) liveRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/live/new", s.post(s.liveNew))
 	mux.HandleFunc("/api/live/move", s.post(s.liveMove))
 	mux.HandleFunc("/api/live/resign", s.post(s.liveResign))
+	mux.HandleFunc("/api/live/coach", s.post(s.liveCoach))
 	mux.HandleFunc("/api/live/events", s.liveEvents)
 	mux.HandleFunc("/api/live/state", s.liveState)
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
@@ -143,6 +145,35 @@ func (s *server) liveMove(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err.Error())
 	default:
 		writeJSON(w, map[string]any{"ok": true, "san": played.SAN, "uci": played.UCI})
+	}
+}
+
+func (s *server) liveCoach(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID  string `json:"id"`
+		Ply int    `json:"ply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	sess := s.opts.Live.Session(req.ID)
+	if sess == nil {
+		fail(w, http.StatusNotFound, "unknown game")
+		return
+	}
+	switch err := sess.AskCoach(req.Ply); {
+	case errors.Is(err, game.ErrCoachOff), errors.Is(err, game.ErrUnknownPly):
+		fail(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, game.ErrNotGraded), errors.Is(err, game.ErrCoachBudget):
+		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, game.ErrCoachBusy):
+		w.Header().Set("Retry-After", "3")
+		fail(w, http.StatusTooManyRequests, err.Error())
+	case err != nil:
+		fail(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, map[string]any{"ok": true})
 	}
 }
 

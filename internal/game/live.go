@@ -60,6 +60,11 @@ type LiveConfig struct {
 	MaxGamesPerDay  int
 	IdleTimeout     time.Duration
 	GameTokenBudget int
+
+	// NoCoach turns the chess coach off (coach.go). On by default: after each
+	// of the human's moves a model call, on the game's model and inside its
+	// token budget, comments on the move, and any move can be explained on request.
+	NoCoach bool
 }
 
 // ModelChoice is one model a player may pick: how it is called and how the
@@ -91,6 +96,7 @@ type LiveInfo struct {
 	Exclusive       bool        `json:"exclusive"`
 	IdleTimeoutMS   int64       `json:"idle_timeout_ms"`
 	GameTokenBudget int         `json:"game_token_budget"`
+	Coach           bool        `json:"coach"`
 }
 
 // StartOptions describe a new game.
@@ -206,6 +212,7 @@ func (l *Live) Info() LiveInfo {
 		MoveTimeoutMS: l.cfg.MoveTimeout.Milliseconds(), Script: l.cfg.Script,
 		DefaultModel: l.cfg.DefaultModel, Exclusive: l.cfg.Exclusive,
 		IdleTimeoutMS: l.cfg.IdleTimeout.Milliseconds(), GameTokenBudget: l.cfg.GameTokenBudget,
+		Coach: !l.cfg.NoCoach,
 	}
 	for _, m := range l.models {
 		info.Models = append(info.Models, ModelInfo{ID: m.ID, Label: m.Label, Model: m.Agent.Model, Provider: m.provider})
@@ -349,6 +356,7 @@ func (l *Live) Start(o StartOptions) (*Session, error) {
 	if humanColor == chess.Black {
 		s.agentColor = chess.White
 	}
+	s.coach = l.newCoachState(model, l.cfg.Seed+int64(seq)*104729+1)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.cancel = cancel
 
@@ -410,6 +418,13 @@ type Session struct {
 	changed  chan struct{} // closed and replaced on every event
 	finished bool
 	ended    bool // the game itself is over (game_over emitted); grading and saving may still run
+
+	coach *coachState // nil when the coach is off
+
+	usageMu       sync.Mutex
+	tokensUsed    int // the agent's model tokens: the only ones that end a game
+	coachTokens   int // the coach's settled tokens, against its own allowance
+	coachReserved int // worst-case tokens set aside for coach calls in flight
 }
 
 // Submit plays the human's move. It is rejected, and the game keeps waiting,
@@ -420,7 +435,12 @@ func (s *Session) Submit(move string) (HumanMove, error) { return s.human.Submit
 func (s *Session) Resign() { s.human.Resign() }
 
 // Abort abandons the game.
-func (s *Session) Abort() { s.cancel() }
+func (s *Session) Abort() {
+	s.cancel()
+	if s.coach != nil {
+		s.coach.stop()
+	}
+}
 
 // Ended reports whether the game is over. It may still be grading and saving.
 func (s *Session) Ended() bool {
@@ -497,7 +517,6 @@ func (s *Session) run(ctx context.Context, seq int) {
 		failure error
 	)
 	scriptIdx, scriptOK := 0, len(s.script) > 0
-	var tokensUsed int
 	var idled, overBudget bool
 
 	for g.Outcome() == chess.NoOutcome && len(g.Moves()) < cfg.MaxPlies {
@@ -511,7 +530,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 		pos := g.Position()
 
 		if pos.Turn() == s.agentColor {
-			if cfg.GameTokenBudget > 0 && tokensUsed >= cfg.GameTokenBudget {
+			if used, _ := s.tokenCounts(); cfg.GameTokenBudget > 0 && used >= cfg.GameTokenBudget {
 				overBudget = true
 				s.notice("warn", fmt.Sprintf("This game used its %d-token budget, so it ends here.", cfg.GameTokenBudget))
 				break
@@ -534,7 +553,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 				},
 				decided: func(d decision) {
 					st := d.Stats
-					tokensUsed += st.InputTokens + st.OutputTokens
+					s.addTokens(st.InputTokens + st.OutputTokens)
 					s.emit("agent_moved", map[string]any{
 						"ply": d.Ply, "move_number": d.MoveNumber, "color": d.Color,
 						"san": d.SAN, "uci": d.UCI, "fen_after": d.FENAfter, "trace_id": d.TraceID,
@@ -554,6 +573,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 				}
 				break
 			}
+			s.rememberMove(pm.ply, pm.before, pm.mv, false)
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
@@ -571,6 +591,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 				recMu.Lock()
 				records = append(records, rec)
 				recMu.Unlock()
+				s.rememberGrade(pm.ply, pm.grade)
 				ev := map[string]any{
 					"ply": rec.Ply, "class": rec.Class, "cp_loss": rec.CPLoss,
 					"win_chance_drop": rec.WinChanceDrop, "best_move": rec.BestMove,
@@ -638,6 +659,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 			"ply": ply, "san": san, "uci": uci, "fen_after": g.Position().String(),
 			"explain": Describe(pos, mv),
 		})
+		s.rememberMove(ply, pos, mv, true)
 		// Grade the move in the background: the board and the agent's turn do
 		// not wait for Stockfish, and a failure only hides the grade.
 		wg.Add(1)
