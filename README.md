@@ -200,7 +200,7 @@ make live MODEL=llama3.1:8b BASE_URL=http://localhost:11434/v1 PROVIDER=ollama
 # then open http://localhost:8080/live.html
 ```
 
-It needs Stockfish (it grades every agent move) and the usual Collector stack if
+It needs Stockfish (it grades every move, the person's and the agent's) and the usual Collector stack if
 you want the traces (`make up`). Without a Collector the game still plays and is
 still recorded to `data/`. Flags (`./bin/gambit serve -h`; pass extras with
 `LIVE_ARGS='...'`): the model flags are the ones `play` takes, except that the
@@ -223,7 +223,8 @@ flags. All are off by default, so on a laptop nothing changes:
 | `--exclusive` | A new game while one is running gets HTTP 409 instead of abandoning it. |
 | `--max-games-per-hour`, `--max-games-per-day` | Cap game starts; beyond it HTTP 429 with a `Retry-After` header. |
 | `--idle-timeout` | End a game whose human has not moved for this long. |
-| `--game-token-budget` | End a game once the agent used this many input+output tokens. |
+| `--game-token-budget` | End a game once the agent used this many input+output tokens. The coach has its own allowance of half that, counted apart, so it never ends a game. |
+| `--no-coach` | Turn the coach off. |
 
 `GET /healthz` answers `ok` (for uptime checks). A reverse proxy that authenticates players can pass
 the name in an `X-Gambit-User` header; it becomes `gambit.player.label` on that game's traces and
@@ -285,6 +286,63 @@ spans, same attributes, graded by the same second Stockfish), with these extras:
   Dashboards and `make sql` include human games unless you filter on it.
 - The Grafana Cloud route (`make up-cloud`) is unchanged and sends human traces too.
 
+### Feedback for the person playing
+
+The person's own moves are graded too, so a beginner learns while they play:
+
+- Each of their moves is graded by the same Stockfish grader, with the same five
+  classes (best, good, inaccuracy, mistake, blunder), in the background: the
+  board and the agent's turn never wait for it. If the grader fails, only the
+  grade is missing.
+- After an inaccuracy, mistake or blunder the card under the board shows the move
+  Stockfish preferred, a short reason, and how much winning chance the move cost,
+  in percent. The reason comes from Stockfish's choice plus plain rules (a piece
+  left to be taken, a checkmate missed or allowed, what the better move wins or
+  attacks) and, if none applies, the change in the score. That reason needs no model call; the coach below is separate.
+- Every move, the person's and the agent's, can be read without chess notation:
+  hover, focus or tap a move to see "Knight moves to h3" or "Pawn on e takes the
+  knight on d5" (castling, promotion, en passant, check and checkmate included),
+  with the squares lit on the board. Grade labels and piece names are explained
+  next to where they appear.
+- The agent's graded moves get the same better-move note, written about the agent.
+- The grade of a human move is not an agent result: it is not written to
+  `moves.jsonl`, is not counted in a game's blunders and mistakes, and so never
+  reaches `gambit analyze`.
+- In traces it is a separate small trace named `chess.human_move` (one per human
+  move), with `chess.player.type=human`, `gambit.run.mode=human`, and the grade in
+  `chess.human.move.class`, `chess.human.eval.*`. It has no `gen_ai.*` attributes
+  and no `chess.move.class`, so dashboards built on the agent's attributes ignore
+  it; the tail sampler keeps it with the other human-game traces.
+
+### The coach
+
+For people who have never played chess, a coach (a second model call) talks
+in plain words, in addition to the grade and the rule-based reason above.
+
+- After each of the person's moves, good or bad, the coach adds a short comment
+  once Stockfish has graded it. **Ask the coach why** on any move, the agent's
+  included, explains that move on request (once per move).
+- It uses the game's model (the one the model switch picked) through the same
+  client, so the mock model gives a canned, clearly mock coach.
+- It is grounded, not trusted: the prompt holds only what Stockfish and the
+  rules already found (grade, the better move, winning chance lost, the reason),
+  with every move written in words. A reply that contains chess notation
+  (`Nf3`, `exd5`, `O-O`) is thrown away.
+- It is off the critical path. A coach error, timeout (25s) or unreadable
+  answer only means no comment; the board and the game never wait for it.
+- Its tokens do not count toward ending a game: `--game-token-budget` is checked
+  against the agent's tokens only. The coach has its own allowance of half the
+  budget (worst case reserved before each call), and when that is spent it just
+  stops commenting. `--no-coach` turns it off.
+- In traces it is its own agent in the game's `gen_ai.conversation.id`: a
+  separate `chess.coach` trace per call holding `invoke_agent coach`
+  (`gen_ai.agent.name=coach`, `gambit.coach.kind` = `comment` or `why`,
+  `gambit.coach.subject` = `human` or `agent`) and its `chat {model}` span. The
+  player's spans keep `chess-agent`. Prompt and answer are captured on the chat
+  span under the same `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`
+  switch. Coach calls are not in the dataset, so `gambit analyze` never sees them.
+  The dashboards' decision-latency panels select `invoke_agent chess-agent`.
+
 ### Trace links and the Collector
 
 The Collector's tail sampler holds a trace for `decision_wait` (15s) before
@@ -309,7 +367,8 @@ The page is a thin client over a small API, so a rehearsal can also be scripted:
 | `POST /api/live/new` `{"human_color":"white","script":["e4"],"model":"luna-6"}` | start a game (abandons a running one, or 409 with `--exclusive`; 429 with `Retry-After` over the game limits; `model` only with `--models`); returns `{"id"}` |
 | `POST /api/live/move` `{"id","move"}` | the human's move, UCI (`e2e4`, `e7e8q`) or SAN; 422 if illegal, 409 if it is not their turn |
 | `POST /api/live/resign` `{"id"}` | |
-| `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `agent_graded`, `game_over`, `game_saved`, `notice`, `error` |
+| `POST /api/live/coach` `{"id","ply"}` | "Ask the coach why" on any graded move; the answer is a `coach_comment` event (404 coach off or no such move, 409 not graded yet or coach budget used, 429 busy) |
+| `GET /api/live/events?id=` | server-sent events: `game_started`, `human_turn`, `human_moved`, `agent_thinking`, `agent_progress`, `agent_moved`, `human_graded`, `agent_graded`, `coach_thinking`, `coach_comment`, `coach_unavailable`, `game_over`, `game_saved`, `notice`, `error` |
 | `GET /api/live/state?id=` | the whole event log as JSON |
 
 POSTs must be same-origin JSON: a page on another origin cannot start games on

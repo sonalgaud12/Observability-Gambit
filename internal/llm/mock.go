@@ -58,6 +58,10 @@ func (m *Mock) Chat(ctx context.Context, req Request) (Response, error) {
 	defer m.mu.Unlock()
 	m.calls++
 
+	if coachFacts(req) != nil {
+		return m.coachReply(ctx, req)
+	}
+
 	var fen string
 	for i := len(req.Messages) - 1; i >= 0 && fen == ""; i-- {
 		if mm := fenLine.FindStringSubmatch(req.Messages[i].Content); mm != nil {
@@ -234,3 +238,69 @@ func (m *Mock) illegalMove(pos *chess.Position) string {
 }
 
 func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
+
+// --- the chess coach ---------------------------------------------------------
+
+// coachFacts returns the "Label: value" lines of a coach prompt, or nil when
+// the request is not one. The coach's user message starts with a FACTS block
+// (internal/game/coach.go) and has no FEN.
+func coachFacts(req Request) map[string]string {
+	if len(req.Messages) == 0 {
+		return nil
+	}
+	last := req.Messages[len(req.Messages)-1].Content
+	if !strings.HasPrefix(last, "FACTS") {
+		return nil
+	}
+	facts := map[string]string{}
+	for _, line := range strings.Split(last, "\n") {
+		if k, v, ok := strings.Cut(line, ": "); ok {
+			facts[k] = v
+		}
+	}
+	return facts
+}
+
+// coachReply answers a coach prompt with canned plain-language text built from
+// the facts in it, so the mock coach stays as factual as the real one is told
+// to be: it says what it was given and nothing else.
+func (m *Mock) coachReply(ctx context.Context, req Request) (Response, error) {
+	f := coachFacts(req)
+	sleep := time.Duration(0.4 * float64(time.Second) * m.latencyScale)
+	select {
+	case <-time.After(sleep):
+	case <-ctx.Done():
+		return Response{}, ctx.Err()
+	}
+	played := f["Move played"]
+	verdict, _, _ := strings.Cut(f["Stockfish's verdict"], " ")
+	mine := strings.HasPrefix(f["Who moved"], "the player")
+	subject := "The AI's move"
+	if mine {
+		subject = "Your move"
+	}
+	var b strings.Builder
+	switch verdict {
+	case "best":
+		fmt.Fprintf(&b, "%s: %s. That was the strongest move on the board, so nothing was given away.", subject, played)
+	case "good":
+		fmt.Fprintf(&b, "%s: %s. It is a sound move that keeps things safe.", subject, played)
+	default:
+		fmt.Fprintf(&b, "%s: %s. Stockfish rates that a %s.", subject, played, verdict)
+	}
+	if better := f["The move Stockfish preferred"]; better != "" && verdict != "best" {
+		fmt.Fprintf(&b, " A better move was: %s.", strings.ToLower(better[:1])+better[1:])
+	}
+	if why := f["Why the preferred move was better"]; why != "" {
+		b.WriteString(" " + why)
+	}
+	out := b.String()
+	in := 0
+	for _, msg := range req.Messages {
+		in += len(msg.Content) / 4
+	}
+	return Response{
+		ID: fmt.Sprintf("mock-%d", m.calls), Model: req.Model, InputTokens: in, OutputTokens: len(out)/4 + 1,
+		Message: Message{Role: "assistant", Content: out}, FinishReason: "stop",
+	}, nil
+}

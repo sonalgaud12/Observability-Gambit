@@ -27,6 +27,7 @@ type Grade struct {
 	WinChanceDrop float64 `json:"win_chance_drop"` // drop on the [-1,1] winning-chances scale
 	Class         string  `json:"class"`
 	BestMove      string  `json:"best_move"` // SAN
+	BestUCI       string  `json:"best_uci,omitempty"`
 	Depth         int     `json:"depth"`
 }
 
@@ -103,6 +104,7 @@ func (g *Grader) Grade(ctx context.Context, before *chess.Position, played *ches
 	playedUCI := chess.UCINotation{}.Encode(before, played)
 	if bm, err := (chess.UCINotation{}).Decode(before, rb.BestMove); err == nil && rb.BestMove != "" {
 		gr.BestMove = chess.AlgebraicNotation{}.Encode(before, bm)
+		gr.BestUCI = rb.BestMove
 	}
 	gr.Class = Classify(gr.WinChanceDrop, playedUCI == rb.BestMove)
 	return gr, nil

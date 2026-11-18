@@ -262,6 +262,7 @@ type decision struct {
 	Ply, MoveNumber, LegalMoves int
 	Color                       string
 	SAN, UCI, FENAfter, TraceID string
+	Explain                     MoveText
 	Latency                     time.Duration
 	Stats                       agent.Stats
 }
@@ -284,6 +285,7 @@ type pendingMove struct {
 	san, uci                      string
 	st                            agent.Stats
 	latency                       time.Duration
+	grade                         Grade // set by finish
 }
 
 // decide starts the move's trace, asks the agent, and plays the chosen move on
@@ -387,7 +389,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	if o.decided != nil {
 		o.decided(decision{
 			Ply: ply, MoveNumber: moveNo, LegalMoves: len(legal), Color: colorName(before.Turn()),
-			SAN: san, UCI: uci, FENAfter: pm.after.Position().String(),
+			SAN: san, UCI: uci, FENAfter: pm.after.Position().String(), Explain: Describe(before, mv),
 			TraceID: root.SpanContext().TraceID().String(), Latency: latency, Stats: st,
 		})
 	}
@@ -417,6 +419,7 @@ func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
 		sc.ChessBestMove.String(gr.BestMove),
 	)
 	ev.End()
+	pm.grade = gr
 
 	pm.root.SetAttributes(
 		sc.ChessMoveSAN.String(pm.san),
