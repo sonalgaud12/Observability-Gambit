@@ -2,6 +2,7 @@
 #
 #   make up          start the backend stack (Collector, Jaeger, ClickHouse, Prometheus, Grafana)
 #   make up-cloud    same, plus an optional Grafana Cloud route (README: Send to Grafana Cloud)
+#   make up-prod     the cloud play stack: game server + Caddy + the above (deploy/gcp/README.md)
 #   make rehearse    50 mock games, no API key (synthetic correlations: rehearsal only)
 #   make play        real games against an OpenAI-compatible endpoint (see README)
 #   make analyze     correlation report + model -> out/
@@ -22,7 +23,7 @@ LIVE_ARGS  ?=
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT ?= true
 export STOCKFISH_PATH ?= $(STOCKFISH)
 
-.PHONY: build test up up-cloud down logs rehearse play analyze serve live live-mock replay sql clean
+.PHONY: build test up up-cloud up-prod down logs rehearse play analyze serve live live-mock replay sql clean
 
 build:
 	go mod tidy
@@ -43,6 +44,13 @@ up-cloud:
 	@test -f .env.cloud || { echo "missing .env.cloud: copy .env.cloud.example and fill it in"; exit 1; }
 	mkdir -p data/traces data/replay out
 	docker compose --env-file .env.cloud -f docker-compose.yaml -f docker-compose.cloud.yaml up -d
+
+# The cloud play stack (game server, Caddy, ports on 127.0.0.1). Needs .env.prod
+# (see deploy/gcp/env.example) and Caddy's passcode file; on the VM, systemd does this.
+up-prod:
+	@test -f .env.prod || { echo "missing .env.prod: copy deploy/gcp/env.example and fill it in (see deploy/gcp/README.md)"; exit 1; }
+	mkdir -p data/traces data/replay out
+	docker compose --env-file .env.prod -f docker-compose.yaml -f docker-compose.cloud.yaml -f deploy/gcp/docker-compose.prod.yaml up -d --build
 
 down:
 	docker compose down

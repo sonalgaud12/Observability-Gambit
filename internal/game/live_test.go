@@ -3,7 +3,9 @@ package game
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -27,13 +29,16 @@ func TestMain(m *testing.M) {
 
 // fakeGrader stands in for Stockfish: every move is "good", except that
 // blunderSAN, if set, is graded a blunder.
-type fakeGrader struct{ blunderSAN string }
+type fakeGrader struct{ blunderSAN, bestSAN string }
 
 func (f fakeGrader) NewGame() error { return nil }
 func (f fakeGrader) Close()         {}
 func (f fakeGrader) Grade(_ context.Context, before *chess.Position, played *chess.Move, _ *chess.Game) (Grade, error) {
 	gr := Grade{EvalBeforeCP: 20, EvalAfterCP: 10, CPLoss: 10, WinChanceDrop: 0.01, Class: ClassGood, BestMove: "e4", Depth: 1}
 	san := chess.AlgebraicNotation{}.Encode(before, played)
+	if f.bestSAN != "" {
+		gr.BestMove = f.bestSAN
+	}
 	if f.blunderSAN != "" && san == f.blunderSAN {
 		gr.Class, gr.WinChanceDrop, gr.CPLoss = ClassBlunder, 0.5, 400
 	}
@@ -193,7 +198,13 @@ func TestLiveHumanGame(t *testing.T) {
 	}
 
 	// The event order a UI relies on.
-	got := types(s)
+	var got []string
+	for _, ty := range types(s) {
+		// the grade of the human's move, and the coach's remarks on it, arrive whenever they are done
+		if ty != "human_graded" && !strings.HasPrefix(ty, "coach_") {
+			got = append(got, ty)
+		}
+	}
 	want := []string{"game_started", "human_turn", "human_moved", "agent_thinking"}
 	for i, w := range want {
 		if got[i] != w {
@@ -468,9 +479,12 @@ func TestLiveGameToCheckmate(t *testing.T) {
 		c.Agent.Tools = false
 	})
 	s, _ := f.live.Start(StartOptions{})
-	for ply, mv := range map[int]string{1: "f3", 3: "g4"} {
-		waitFor(t, s, 0, "human_turn", func(d map[string]any) bool { return d["ply"].(float64) == float64(ply) })
-		if _, err := s.Submit(mv); err != nil {
+	for _, step := range []struct { // in order: a map would visit ply 3 first and wait forever
+		ply int
+		mv  string
+	}{{1, "f3"}, {3, "g4"}} {
+		waitFor(t, s, 0, "human_turn", func(d map[string]any) bool { return d["ply"].(float64) == float64(step.ply) })
+		if _, err := s.Submit(step.mv); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -505,4 +519,411 @@ func (c *scriptedClient) Chat(_ context.Context, _ llm.Request) (llm.Response, e
 		Message:      llm.Message{Role: "assistant", Content: "MOVE: " + mv},
 		FinishReason: "stop", InputTokens: 10, OutputTokens: 3,
 	}, nil
+}
+
+// --- limits for a shared deployment ---
+
+func TestLiveExclusiveRefusesASecondGame(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Exclusive = true })
+	first, err := f.live.Start(StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn := waitFor(t, first, 0, "human_turn", nil)
+
+	if _, err := f.live.Start(StartOptions{}); !errors.Is(err, ErrGameInProgress) {
+		t.Fatalf("second Start err = %v, want ErrGameInProgress", err)
+	}
+	// The refused request did not touch the first game: it still takes moves.
+	if _, err := first.Submit("e2e4"); err != nil {
+		t.Fatalf("the running game was disturbed: %v", err)
+	}
+	waitFor(t, first, turn.ID, "agent_moved", nil)
+
+	// Once the game is over (here: resigned) the slot is free again.
+	first.Resign()
+	waitFor(t, first, 0, "game_over", nil)
+	<-first.Done()
+	second, err := f.live.Start(StartOptions{})
+	if err != nil {
+		t.Fatalf("Start after the game ended: %v", err)
+	}
+	second.Abort()
+	<-second.Done()
+}
+
+func TestLiveNotExclusiveByDefault(t *testing.T) {
+	// TestLiveNewGameAbandonsTheRunningOne covers the behaviour; this pins that
+	// the zero config has no lock and no limits.
+	f := newLive(t, nil)
+	if i := f.live.Info(); i.Exclusive || i.IdleTimeoutMS != 0 || i.GameTokenBudget != 0 {
+		t.Errorf("limits are on by default: %+v", i)
+	}
+}
+
+func TestLiveRateLimits(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.MaxGamesPerHour, c.MaxGamesPerDay = 2, 3 })
+	now := time.Date(2026, 12, 1, 9, 0, 0, 0, time.UTC)
+	f.live.now = func() time.Time { return now }
+
+	start := func() error {
+		s, err := f.live.Start(StartOptions{})
+		if err == nil {
+			s.Abort()
+			<-s.Done()
+		}
+		return err
+	}
+	for i := 0; i < 2; i++ {
+		if err := start(); err != nil {
+			t.Fatalf("game %d: %v", i+1, err)
+		}
+	}
+	err := start()
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("third game in the hour: err = %v, want ErrRateLimited", err)
+	}
+	if !strings.Contains(err.Error(), "per hour") {
+		t.Errorf("the error does not say which limit: %v", err)
+	}
+
+	now = now.Add(61 * time.Minute) // the hourly window has moved on
+	if err := start(); err != nil {
+		t.Fatalf("game in the next hour: %v", err)
+	}
+	now = now.Add(61 * time.Minute)
+	err = start() // 4th game inside 24 h
+	if !errors.Is(err, ErrRateLimited) || !strings.Contains(err.Error(), "per day") {
+		t.Fatalf("daily limit: err = %v", err)
+	}
+	now = now.Add(24 * time.Hour)
+	if err := start(); err != nil {
+		t.Fatalf("game the next day: %v", err)
+	}
+}
+
+func TestLiveRefusedStartsDoNotCountTowardTheLimit(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Exclusive, c.MaxGamesPerHour = true, 2 })
+	first, _ := f.live.Start(StartOptions{})
+	waitFor(t, first, 0, "human_turn", nil)
+	for i := 0; i < 5; i++ {
+		if _, err := f.live.Start(StartOptions{}); !errors.Is(err, ErrGameInProgress) {
+			t.Fatalf("err = %v", err)
+		}
+	}
+	first.Abort()
+	<-first.Done()
+	second, err := f.live.Start(StartOptions{})
+	if err != nil {
+		t.Fatalf("refused starts used up the hourly allowance: %v", err)
+	}
+	second.Abort()
+	<-second.Done()
+}
+
+func TestLiveIdleTimeoutEndsAnAbandonedGame(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Exclusive, c.IdleTimeout = true, 200*time.Millisecond })
+	s, err := f.live.Start(StartOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, s, 0, "human_turn", nil)
+	over := waitFor(t, s, 0, "game_over", nil) // the human never moves
+	if over.data["method"] != "IdleTimeout" {
+		t.Errorf("game_over = %v", over.data)
+	}
+	<-s.Done()
+	if !s.Ended() {
+		t.Error("session not marked ended")
+	}
+	next, err := f.live.Start(StartOptions{})
+	if err != nil {
+		t.Fatalf("the idle game did not free the slot: %v", err)
+	}
+	next.Abort()
+	<-next.Done()
+}
+
+func TestLiveIdleTimerRestartsEveryTurn(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.IdleTimeout = 1500 * time.Millisecond })
+	s, _ := f.live.Start(StartOptions{})
+	turn := waitFor(t, s, 0, "human_turn", nil)
+	for _, mv := range []string{"e2e4", "d2d4"} {
+		time.Sleep(900 * time.Millisecond) // longer than half the budget, twice: only a per-turn timer survives
+		if _, err := s.Submit(mv); err != nil {
+			t.Fatalf("%s: %v", mv, err)
+		}
+		moved := waitFor(t, s, turn.ID, "agent_moved", nil)
+		turn = waitFor(t, s, moved.ID, "human_turn", nil)
+	}
+	s.Abort()
+	<-s.Done()
+}
+
+func TestLiveTokenBudgetEndsTheGame(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.GameTokenBudget = 1 }) // any agent move exceeds it
+	s, _ := f.live.Start(StartOptions{})
+	turn := waitFor(t, s, 0, "human_turn", nil)
+	if _, err := s.Submit("e2e4"); err != nil {
+		t.Fatal(err)
+	}
+	moved := waitFor(t, s, turn.ID, "agent_moved", nil) // the first agent move is always allowed
+	waitFor(t, s, moved.ID, "agent_graded", nil)
+	turn = waitFor(t, s, moved.ID, "human_turn", nil)
+	if _, err := s.Submit("d2d4"); err != nil {
+		t.Fatal(err)
+	}
+	over := waitFor(t, s, turn.ID, "game_over", nil)
+	if over.data["method"] != "TokenBudget" {
+		t.Errorf("game_over = %v", over.data)
+	}
+	<-s.Done()
+	// The one graded move is still saved.
+	select {
+	case g := <-f.saved:
+		if g.Method != "TokenBudget" || g.Blunders+g.Mistakes < 0 {
+			t.Errorf("saved game = %+v", g)
+		}
+	case <-time.After(5 * time.Second):
+		t.Error("the budget-limited game was not saved")
+	}
+}
+
+// --- model choice and player label ---
+
+func twoModels() []ModelChoice {
+	mk := func(id, label, model string) ModelChoice {
+		return ModelChoice{
+			ID: id, Label: label,
+			Agent: agent.Config{Model: model, Temperature: -1, MaxTokens: 256, MaxRetries: 3, Tools: true},
+			NewClient: func(seed int64, brain llm.Brain) llm.Client {
+				m := llm.NewMock(seed)
+				m.Brain = brain
+				return llm.Instrument(m)
+			},
+		}
+	}
+	return []ModelChoice{mk("haiku-5.5", "Claude Haiku 5.5", "mock-claude-haiku-5-5"), mk("luna-6", "GPT-6 Luna", "mock-gpt-6-luna")}
+}
+
+func TestLiveModelChoiceAndPlayerLabelReachTheTrace(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Models = twoModels() })
+	info := f.live.Info()
+	if len(info.Models) != 2 || info.DefaultModel != "haiku-5.5" || info.Model != "mock-claude-haiku-5-5" {
+		t.Fatalf("info = %+v", info)
+	}
+
+	for _, tc := range []struct{ id, wantModel string }{
+		{"luna-6", "mock-gpt-6-luna"}, {"", "mock-claude-haiku-5-5"},
+	} {
+		s, err := f.live.Start(StartOptions{Model: tc.id, Player: "sonal"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		started := waitFor(t, s, 0, "game_started", nil)
+		if started.data["model"] != tc.wantModel || started.data["player"] != "sonal" {
+			t.Errorf("game_started = %v", started.data)
+		}
+		turn := waitFor(t, s, 0, "human_turn", nil)
+		if _, err := s.Submit("e2e4"); err != nil {
+			t.Fatal(err)
+		}
+		moved := waitFor(t, s, turn.ID, "agent_moved", nil)
+		waitFor(t, s, moved.ID, "agent_graded", nil)
+		s.Abort()
+		<-s.Done()
+
+		traceID := moved.data["trace_id"].(string)
+		seen := map[string]map[string]string{}
+		for _, sp := range recorder.Ended() {
+			if sp.SpanContext().TraceID().String() != traceID {
+				continue
+			}
+			m := map[string]string{}
+			for _, kv := range sp.Attributes() {
+				m[string(kv.Key)] = kv.Value.Emit()
+			}
+			seen[sp.Name()] = m
+		}
+		for _, name := range []string{"chess.move", "invoke_agent " + agent.Name, "chat " + tc.wantModel} {
+			a, ok := seen[name]
+			if !ok {
+				t.Fatalf("model %q: no span %q in %v", tc.id, name, seen)
+			}
+			if a["gen_ai.request.model"] != tc.wantModel {
+				t.Errorf("%s: gen_ai.request.model = %q, want %q", name, a["gen_ai.request.model"], tc.wantModel)
+			}
+		}
+		for _, name := range []string{"chess.move", "invoke_agent " + agent.Name} {
+			if seen[name]["gambit.player.label"] != "sonal" {
+				t.Errorf("%s: gambit.player.label = %q", name, seen[name]["gambit.player.label"])
+			}
+		}
+		select {
+		case g := <-f.saved:
+			if g.Model != tc.wantModel || g.Player != "sonal" {
+				t.Errorf("saved game = %+v", g)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("game not saved")
+		}
+	}
+}
+
+func TestLiveRejectsAModelOutsideTheAllowList(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Models = twoModels() })
+	if _, err := f.live.Start(StartOptions{Model: "gpt-4o"}); !errors.Is(err, ErrUnknownModel) {
+		t.Errorf("err = %v, want ErrUnknownModel", err)
+	}
+}
+
+func TestNewLiveValidatesTheModelList(t *testing.T) {
+	_, err := NewLive(LiveConfig{Config: Config{Grader: fakeGrader{}, NewClient: twoModels()[0].NewClient}, Models: twoModels(), DefaultModel: "nope"})
+	if err == nil {
+		t.Error("an unknown default model was accepted")
+	}
+	dup := append(twoModels(), twoModels()[0])
+	_, err = NewLive(LiveConfig{Config: Config{Grader: fakeGrader{}}, Models: dup})
+	if err == nil {
+		t.Error("a duplicate model ID was accepted")
+	}
+}
+
+// failingGrader fails on one SAN and otherwise behaves like fakeGrader.
+type failingGrader struct {
+	fakeGrader
+	failSAN string
+}
+
+func (f failingGrader) Grade(ctx context.Context, before *chess.Position, played *chess.Move, after *chess.Game) (Grade, error) {
+	if (chess.AlgebraicNotation{}).Encode(before, played) == f.failSAN {
+		return Grade{}, errors.New("stockfish went away")
+	}
+	return f.fakeGrader.Grade(ctx, before, played, after)
+}
+
+// The human's move is graded with the same grader and classes, the advice is
+// shown, and none of it reaches the dataset or the agent's tallies.
+func TestLiveGradesTheHumansMove(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Grader = fakeGrader{blunderSAN: "f3"} })
+	s, _ := f.live.Start(StartOptions{})
+	turn := waitFor(t, s, 0, "human_turn", nil)
+	if _, err := s.Submit("f2f3"); err != nil {
+		t.Fatal(err)
+	}
+	moved := waitFor(t, s, turn.ID, "human_moved", nil)
+	ex := moved.data["explain"].(map[string]any)
+	if ex["text"] != "Pawn moves to f3" || ex["from"] != "f2" || ex["to"] != "f3" {
+		t.Errorf("human_moved explain = %v", ex)
+	}
+	g := waitFor(t, s, moved.ID, "human_graded", nil)
+	if g.data["ply"].(float64) != 1 || g.data["class"] != ClassBlunder || g.data["win_pct_lost"].(float64) != 25 {
+		t.Errorf("human_graded = %v", g.data)
+	}
+	coach := g.data["coach"].(map[string]any)
+	if coach["best_san"] != "e4" || coach["advice"] == "" || coach["best"].(map[string]any)["text"] != "Pawn moves to e4" {
+		t.Errorf("coach note = %v", coach)
+	}
+	// The agent still answers, and its own grade is a separate event.
+	am := waitFor(t, s, moved.ID, "agent_moved", nil)
+	if am.data["explain"].(map[string]any)["text"] == "" {
+		t.Errorf("agent_moved has no explanation: %v", am.data)
+	}
+	waitFor(t, s, am.ID, "agent_graded", nil)
+	s.Resign()
+	over := waitFor(t, s, am.ID, "game_over", nil)
+	waitFor(t, s, over.ID, "game_saved", nil)
+
+	// Not in the dataset: only the agent's move is a row, and the tallies ignore the human's blunder.
+	moves, _ := dataset.LoadMoves(f.dir)
+	if len(moves) != 1 || moves[0].Ply != 2 {
+		t.Errorf("dataset moves = %+v, want only the agent's ply 2", moves)
+	}
+	games, _ := dataset.LoadGames(f.dir)
+	if len(games) != 1 || games[0].Blunders != 0 {
+		t.Errorf("games = %+v, the human's blunder must not count", games)
+	}
+
+	// Traced as the human's, in its own trace, and nothing like an agent span.
+	var human sdktrace.ReadOnlySpan
+	for _, sp := range recorder.Ended() {
+		if sp.Name() != "chess.human_move" {
+			continue
+		}
+		for _, kv := range sp.Attributes() {
+			if kv.Key == "chess.game.id" && kv.Value.Emit() == s.ID {
+				human = sp
+			}
+		}
+	}
+	if human == nil {
+		t.Fatal("no chess.human_move span for the game")
+	}
+	attrs := map[string]string{}
+	for _, kv := range human.Attributes() {
+		attrs[string(kv.Key)] = kv.Value.Emit()
+	}
+	for k, v := range map[string]string{
+		"chess.player.type": "human", "gambit.run.mode": "human", "chess.human.move.class": ClassBlunder,
+		"chess.move.san": "f3", "chess.ply": "1", "chess.human.eval.best_move": "e4",
+	} {
+		if attrs[k] != v {
+			t.Errorf("human span %s = %q, want %q", k, attrs[k], v)
+		}
+	}
+	for k := range attrs {
+		if strings.HasPrefix(k, "gen_ai.") || k == "chess.move.class" || strings.HasPrefix(k, "chess.eval.") {
+			t.Errorf("human span carries the agent's attribute %s", k)
+		}
+	}
+	for _, sp := range recorder.Ended() {
+		if sp.SpanContext().TraceID() == human.SpanContext().TraceID() && sp.Name() != "chess.human_move" {
+			t.Errorf("the human's trace also holds %q", sp.Name())
+		}
+	}
+}
+
+// A grader failure only hides the grade: the game goes on and the dataset is unaffected.
+func TestLiveGraderFailureOnAHumanMoveOnlyHidesTheGrade(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) { c.Grader = failingGrader{failSAN: "e4"} })
+	s, _ := f.live.Start(StartOptions{})
+	turn := waitFor(t, s, 0, "human_turn", nil)
+	if _, err := s.Submit("e2e4"); err != nil {
+		t.Fatal(err)
+	}
+	g := waitFor(t, s, turn.ID, "human_graded", nil)
+	if g.data["failed"] != true || g.data["class"] != nil {
+		t.Errorf("human_graded = %v, want failed and no class", g.data)
+	}
+	am := waitFor(t, s, turn.ID, "agent_moved", nil)
+	waitFor(t, s, am.ID, "agent_graded", nil)
+	waitFor(t, s, am.ID, "human_turn", nil) // the game carries on
+	s.Resign()
+	over := waitFor(t, s, am.ID, "game_over", nil)
+	saved := waitFor(t, s, over.ID, "game_saved", nil)
+	if saved.data["saved"] != true {
+		t.Errorf("game_saved = %v", saved.data)
+	}
+}
+
+// The agent's grade comes with the same plain-language note.
+func TestLiveAgentBlunderComesWithACoachNote(t *testing.T) {
+	f := newLive(t, func(c *LiveConfig) {
+		c.Grader = fakeGrader{blunderSAN: "e5", bestSAN: "d5"}
+		c.NewClient = func(int64, llm.Brain) llm.Client { return llm.Instrument(&scriptedClient{moves: []string{"e5"}}) }
+		c.Agent.Tools = false
+	})
+	s, _ := f.live.Start(StartOptions{})
+	turn := waitFor(t, s, 0, "human_turn", nil)
+	s.Submit("e2e4")
+	am := waitFor(t, s, turn.ID, "agent_moved", nil)
+	gr := waitFor(t, s, am.ID, "agent_graded", nil)
+	if gr.data["class"] != ClassBlunder || gr.data["win_pct_lost"].(float64) != 25 {
+		t.Errorf("agent_graded = %v", gr.data)
+	}
+	if gr.data["coach"] == nil {
+		t.Errorf("no coach note on the agent's blunder: %v", gr.data)
+	}
+	s.Abort()
+	<-s.Done()
 }

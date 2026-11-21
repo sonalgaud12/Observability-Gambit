@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -15,20 +16,44 @@ import (
 
 // Human-mode API. A game is a session; the UI follows its event log.
 //
-//	POST /api/live/new      {human_color?, script?}  start a game, abandoning any running one
+//	POST /api/live/new      {human_color?, script?, model?}  start a game (409 if the server is exclusive and one is running; 429 over the game limits)
 //	POST /api/live/move     {id, move}               play the human's move (UCI "e2e4"/"e7e8q" or SAN)
 //	POST /api/live/resign   {id}
+//	POST /api/live/coach    {id, ply}                "Ask the coach why" on any move; the answer is a coach_comment event (404 off/unknown move, 409 not graded yet or budget used, 429 busy)
 //	GET  /api/live/events   ?id=                     server-sent events; resumes from Last-Event-ID
 //	GET  /api/live/state    ?id=                     the whole event log as JSON
 func (s *server) liveRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/live/new", s.post(s.liveNew))
 	mux.HandleFunc("/api/live/move", s.post(s.liveMove))
 	mux.HandleFunc("/api/live/resign", s.post(s.liveResign))
+	mux.HandleFunc("/api/live/coach", s.post(s.liveCoach))
 	mux.HandleFunc("/api/live/events", s.liveEvents)
 	mux.HandleFunc("/api/live/state", s.liveState)
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "live.html", http.StatusFound)
 	})
+}
+
+// UserHeader is the request header a front proxy (Caddy) sets to the name of
+// the passcode that authenticated the request. Its value labels the games a
+// person plays; it is not a secret and the passcode never appears in it.
+const UserHeader = "X-Gambit-User"
+
+// playerLabel cleans a proxy-supplied label: letters, digits and . _ - @ only,
+// at most 40 characters. Anything else is dropped, so a label can never carry
+// markup or inject into a log line.
+func playerLabel(v string) string {
+	out := make([]rune, 0, len(v))
+	for _, r := range v {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-', r == '@':
+			out = append(out, r)
+		}
+		if len(out) == 40 {
+			break
+		}
+	}
+	return string(out)
 }
 
 type apiError struct {
@@ -66,13 +91,30 @@ func (s *server) liveNew(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		HumanColor string   `json:"human_color"`
 		Script     []string `json:"script"`
+		Model      string   `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		fail(w, http.StatusBadRequest, "bad request: "+err.Error())
 		return
 	}
-	sess, err := s.opts.Live.Start(game.StartOptions{HumanColor: req.HumanColor, Script: req.Script})
-	if err != nil {
+	player := playerLabel(r.Header.Get(UserHeader))
+	sess, err := s.opts.Live.Start(game.StartOptions{
+		HumanColor: req.HumanColor, Script: req.Script, Model: req.Model, Player: player,
+	})
+	switch {
+	case errors.Is(err, game.ErrGameInProgress):
+		fail(w, http.StatusConflict, err.Error())
+		return
+	case errors.Is(err, game.ErrRateLimited):
+		secs := 60
+		var rl *game.RateLimitError
+		if errors.As(err, &rl) {
+			secs = int(math.Ceil(rl.RetryAfter.Seconds()))
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		fail(w, http.StatusTooManyRequests, err.Error())
+		return
+	case err != nil:
 		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -103,6 +145,35 @@ func (s *server) liveMove(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusInternalServerError, err.Error())
 	default:
 		writeJSON(w, map[string]any{"ok": true, "san": played.SAN, "uci": played.UCI})
+	}
+}
+
+func (s *server) liveCoach(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID  string `json:"id"`
+		Ply int    `json:"ply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, http.StatusBadRequest, "bad request: "+err.Error())
+		return
+	}
+	sess := s.opts.Live.Session(req.ID)
+	if sess == nil {
+		fail(w, http.StatusNotFound, "unknown game")
+		return
+	}
+	switch err := sess.AskCoach(req.Ply); {
+	case errors.Is(err, game.ErrCoachOff), errors.Is(err, game.ErrUnknownPly):
+		fail(w, http.StatusNotFound, err.Error())
+	case errors.Is(err, game.ErrNotGraded), errors.Is(err, game.ErrCoachBudget):
+		fail(w, http.StatusConflict, err.Error())
+	case errors.Is(err, game.ErrCoachBusy):
+		w.Header().Set("Retry-After", "3")
+		fail(w, http.StatusTooManyRequests, err.Error())
+	case err != nil:
+		fail(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, map[string]any{"ok": true})
 	}
 }
 

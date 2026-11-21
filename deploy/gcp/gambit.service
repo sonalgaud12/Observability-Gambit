@@ -1,0 +1,24 @@
+# systemd unit for the play stack on the VM. startup-script.sh installs it as
+# /etc/systemd/system/gambit.service and enables it, so the stack comes back
+# after every reboot or stop/start. Containers also restart on their own
+# (restart: unless-stopped); this unit makes sure the secrets in /run exist first.
+[Unit]
+Description=Observability Gambit play stack
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/gambit
+# Secrets go to /run (tmpfs): they are fetched fresh at every start and never stored on the disk.
+ExecStartPre=/opt/gambit/deploy/gcp/fetch-secrets.sh
+ExecStartPre=/usr/bin/mkdir -p /opt/gambit/data/traces /opt/gambit/data/replay /opt/gambit/out
+ExecStart=/usr/bin/docker compose --env-file /etc/gambit/gambit.env --env-file /run/gambit/env -f docker-compose.yaml -f docker-compose.cloud.yaml -f deploy/gcp/docker-compose.prod.yaml up -d --build
+ExecStop=/usr/bin/docker compose --env-file /etc/gambit/gambit.env --env-file /run/gambit/env -f docker-compose.yaml -f docker-compose.cloud.yaml -f deploy/gcp/docker-compose.prod.yaml stop
+TimeoutStartSec=900
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

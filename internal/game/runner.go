@@ -249,6 +249,8 @@ func (p *player) agentMove(ctx context.Context, g *chess.Game, ag *agent.Agent, 
 // moveOpts tunes one agent move. The zero value is a plain batch move.
 type moveOpts struct {
 	mode    string        // "" for engine games, dataset.ModeHuman for human games
+	model   string        // overrides the config's model name (live games with a model choice)
+	player  string        // human games: label of who is playing (gambit.player.label)
 	timeout time.Duration // hard cap on the decision; 0 = none
 	started func(traceID string)
 	decided func(d decision)
@@ -260,6 +262,7 @@ type decision struct {
 	Ply, MoveNumber, LegalMoves int
 	Color                       string
 	SAN, UCI, FENAfter, TraceID string
+	Explain                     MoveText
 	Latency                     time.Duration
 	Stats                       agent.Stats
 }
@@ -275,19 +278,24 @@ type pendingMove struct {
 	after  *chess.Game // a snapshot: the live game moves on while this is graded
 	mv     *chess.Move
 
-	gameID, provider, mode string
-	ply, moveNo, legal     int
-	inCheck                bool
-	material               int
-	san, uci               string
-	st                     agent.Stats
-	latency                time.Duration
+	gameID, provider, model, mode string
+	ply, moveNo, legal            int
+	inCheck                       bool
+	material                      int
+	san, uci                      string
+	st                            agent.Stats
+	latency                       time.Duration
+	grade                         Grade // set by finish
 }
 
 // decide starts the move's trace, asks the agent, and plays the chosen move on
 // g. The root span stays open until finish.
 func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, provider, gameID string, o moveOpts) (*pendingMove, error) {
 	before := g.Position()
+	model := o.model
+	if model == "" {
+		model = p.cfg.Agent.Model
+	}
 	ply := len(g.Moves()) + 1
 	moveNo := (ply + 1) / 2
 	legal := before.ValidMoves()
@@ -304,7 +312,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 		sc.ChessLegalMoveCount.Int(len(legal)),
 		sc.ChessInCheck.Bool(inCheck),
 		sc.ChessMaterialBalance.Int(material),
-		sc.GenAIRequestModel.String(p.cfg.Agent.Model),
+		sc.GenAIRequestModel.String(model),
 	))
 	if provider == "mock" {
 		root.SetAttributes(sc.GambitMock.Bool(true))
@@ -315,6 +323,9 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	if o.mode == dataset.ModeHuman {
 		root.SetAttributes(sc.ChessOpponentType.String("human"))
 	}
+	if o.player != "" {
+		root.SetAttributes(sc.GambitPlayerLabel.String(o.player))
+	}
 	if o.started != nil {
 		o.started(root.SpanContext().TraceID().String())
 	}
@@ -324,13 +335,16 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 		sc.GenAIOperationName.String(sc.OpInvokeAgent),
 		sc.GenAIAgentName.String(agent.Name),
 		sc.GenAIProviderName.String(provider),
-		sc.GenAIRequestModel.String(p.cfg.Agent.Model),
+		sc.GenAIRequestModel.String(model),
 		sc.GenAIConversationID.String(gameID),
 	))
 	if o.mode != "" {
 		// Also on the decision span, which reaches the Collector before the
 		// root does, so a tail sampler can already see the mode.
 		span.SetAttributes(sc.GambitRunMode.String(o.mode))
+	}
+	if o.player != "" {
+		span.SetAttributes(sc.GambitPlayerLabel.String(o.player))
 	}
 	dctx := actx
 	if o.timeout > 0 {
@@ -368,14 +382,14 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	}
 	pm := &pendingMove{
 		p: p, ctx: ctx, root: root, before: before, after: g.Clone(), mv: mv,
-		gameID: gameID, provider: provider, mode: o.mode,
+		gameID: gameID, provider: provider, model: model, mode: o.mode,
 		ply: ply, moveNo: moveNo, legal: len(legal), inCheck: inCheck, material: material,
 		san: san, uci: uci, st: st, latency: latency,
 	}
 	if o.decided != nil {
 		o.decided(decision{
 			Ply: ply, MoveNumber: moveNo, LegalMoves: len(legal), Color: colorName(before.Turn()),
-			SAN: san, UCI: uci, FENAfter: pm.after.Position().String(),
+			SAN: san, UCI: uci, FENAfter: pm.after.Position().String(), Explain: Describe(before, mv),
 			TraceID: root.SpanContext().TraceID().String(), Latency: latency, Stats: st,
 		})
 	}
@@ -405,6 +419,7 @@ func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
 		sc.ChessBestMove.String(gr.BestMove),
 	)
 	ev.End()
+	pm.grade = gr
 
 	pm.root.SetAttributes(
 		sc.ChessMoveSAN.String(pm.san),
@@ -424,7 +439,7 @@ func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
 
 	rec := dataset.MoveRecord{
 		GameID: pm.gameID, Ply: pm.ply, MoveNumber: pm.moveNo, Color: colorName(before.Turn()),
-		Provider: pm.provider, Model: p.cfg.Agent.Model,
+		Provider: pm.provider, Model: pm.model,
 		TraceID:   pm.root.SpanContext().TraceID().String(),
 		FENBefore: before.String(), SAN: pm.san, UCI: pm.uci,
 

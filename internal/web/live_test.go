@@ -37,7 +37,10 @@ type liveServer struct {
 }
 
 // newLiveServer runs the real handlers with the mock model, no API key and no Stockfish.
-func newLiveServer(t *testing.T) *liveServer {
+func newLiveServer(t *testing.T) *liveServer { return newLiveServerWith(t, nil) }
+
+// newLiveServerWith lets a test turn on the shared-deployment limits and the model choice.
+func newLiveServerWith(t *testing.T, mutate func(*game.LiveConfig)) *liveServer {
 	t.Helper()
 	t.Setenv("GAMBIT_MOCK_LATENCY_SCALE", "0.001")
 	dir := t.TempDir()
@@ -46,7 +49,7 @@ func newLiveServer(t *testing.T) *liveServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { w.Close() })
-	live, err := game.NewLive(game.LiveConfig{
+	cfg := game.LiveConfig{
 		Config: game.Config{
 			Agent: agent.Config{Model: "mock-1", Temperature: -1, MaxTokens: 256, MaxRetries: 3, Tools: true},
 			NewClient: func(seed int64, brain llm.Brain) llm.Client {
@@ -59,7 +62,11 @@ func newLiveServer(t *testing.T) *liveServer {
 		},
 		MoveTimeout: 5 * time.Second,
 		Script:      []string{"e4", "Nf3"},
-	})
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	live, err := game.NewLive(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,5 +399,194 @@ func TestReplayOnlyServerHasNoLiveAPI(t *testing.T) {
 	resp.Body.Close()
 	if cfg["live"] != nil {
 		t.Errorf("config advertises human mode: %v", cfg["live"])
+	}
+}
+
+// --- shared-deployment behaviour ---
+
+func TestHealthz(t *testing.T) {
+	s := newLiveServer(t)
+	resp, err := http.Get(s.URL + "/healthz")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || strings.TrimSpace(string(body)) != "ok" {
+		t.Errorf("/healthz = %d %q", resp.StatusCode, body)
+	}
+
+	// A replay-only server answers too.
+	dir := t.TempDir()
+	w, _ := dataset.NewWriter(dir)
+	w.Close()
+	_, h, err := newServer(Options{Addr: "x", DataDir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp, _ = http.Get(srv.URL + "/healthz")
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Errorf("replay-only /healthz = %d", resp.StatusCode)
+	}
+}
+
+func TestSecondGameGets409AndTheFirstSurvives(t *testing.T) {
+	s := newLiveServerWith(t, func(c *game.LiveConfig) { c.Exclusive = true })
+	code, out := s.post(t, "/api/live/new", map[string]any{}, nil)
+	if code != 200 {
+		t.Fatalf("first game: %d %v", code, out)
+	}
+	first := out["id"].(string)
+	s.waitEvent(t, first, "human_turn", nil)
+
+	code, out = s.post(t, "/api/live/new", map[string]any{}, nil)
+	if code != http.StatusConflict {
+		t.Fatalf("second game: %d %v, want 409", code, out)
+	}
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "in progress") {
+		t.Errorf("409 body = %v", out)
+	}
+	// The first game is untouched and still takes a move.
+	if code, out := s.post(t, "/api/live/move", map[string]any{"id": first, "move": "e2e4"}, nil); code != 200 {
+		t.Errorf("move in the first game: %d %v", code, out)
+	}
+	s.waitEvent(t, first, "agent_moved", nil)
+}
+
+func TestRateLimitIs429WithRetryAfter(t *testing.T) {
+	s := newLiveServerWith(t, func(c *game.LiveConfig) { c.MaxGamesPerHour = 1 })
+	if code, out := s.post(t, "/api/live/new", map[string]any{}, nil); code != 200 {
+		t.Fatalf("first: %d %v", code, out)
+	}
+	b, _ := json.Marshal(map[string]any{})
+	resp, err := http.Post(s.URL+"/api/live/new", "application/json", bytes.NewReader(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second: %d, want 429", resp.StatusCode)
+	}
+	secs, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || secs < 3000 || secs > 3600 {
+		t.Errorf("Retry-After %q, want the hourly window's remaining wait in seconds", resp.Header.Get("Retry-After"))
+	}
+}
+
+func TestModelChoiceAndPlayerLabelOverHTTP(t *testing.T) {
+	mk := func(id, label, model string) game.ModelChoice {
+		return game.ModelChoice{
+			ID: id, Label: label,
+			Agent: agent.Config{Model: model, Temperature: -1, MaxTokens: 256, MaxRetries: 3, Tools: true},
+			NewClient: func(seed int64, brain llm.Brain) llm.Client {
+				m := llm.NewMock(seed)
+				m.Brain = brain
+				return llm.Instrument(m)
+			},
+		}
+	}
+	s := newLiveServerWith(t, func(c *game.LiveConfig) {
+		c.Models = []game.ModelChoice{mk("haiku-5.5", "Claude Haiku 5.5", "mock-claude-haiku-5-5"), mk("luna-6", "GPT-6 Luna", "mock-gpt-6-luna")}
+	})
+
+	var cfg struct {
+		Live struct {
+			Info struct {
+				DefaultModel string `json:"default_model"`
+				Models       []struct {
+					ID, Label, Model string
+				} `json:"models"`
+			} `json:"info"`
+		} `json:"live"`
+	}
+	s.get(t, "/api/config", &cfg)
+	if len(cfg.Live.Info.Models) != 2 || cfg.Live.Info.DefaultModel != "haiku-5.5" || cfg.Live.Info.Models[1].Label != "GPT-6 Luna" {
+		t.Errorf("config models = %+v", cfg.Live.Info)
+	}
+
+	// The label comes from the proxy header and is cleaned; an unknown model is refused.
+	if code, _ := s.post(t, "/api/live/new", map[string]any{"model": "gpt-4o"}, nil); code != 400 {
+		t.Errorf("model outside the allow-list: %d, want 400", code)
+	}
+	code, out := s.post(t, "/api/live/new", map[string]any{"model": "luna-6"},
+		map[string]string{UserHeader: "sonal <b>"})
+	if code != 200 {
+		t.Fatalf("new: %d %v", code, out)
+	}
+	start := s.waitEvent(t, out["id"].(string), "game_started", nil)
+	if start.Data["model"] != "mock-gpt-6-luna" || start.Data["model_id"] != "luna-6" || start.Data["player"] != "sonalb" {
+		t.Errorf("game_started = %v", start.Data)
+	}
+}
+
+func TestPlayerLabelIsCleaned(t *testing.T) {
+	for in, want := range map[string]string{
+		"sonal": "sonal", "Nic_2.0-x@y": "Nic_2.0-x@y", "a b": "ab", "<script>": "script",
+		"": "", "x\r\ny": "xy", strings.Repeat("a", 90): strings.Repeat("a", 40),
+	} {
+		if got := playerLabel(in); got != want {
+			t.Errorf("playerLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The coach comments on the human's move, and "Ask the coach why" works on the
+// agent's, over HTTP, with the mock model.
+func TestCoachOverHTTP(t *testing.T) {
+	s := newLiveServer(t)
+	_, j := s.post(t, "/api/live/new", map[string]any{}, nil)
+	id := j["id"].(string)
+	s.waitEvent(t, id, "human_turn", nil)
+	if code, _ := s.post(t, "/api/live/move", map[string]any{"id": id, "move": "e2e4"}, nil); code != 200 {
+		t.Fatalf("move: %d", code)
+	}
+	c := s.waitEvent(t, id, "coach_comment", nil)
+	if c.Data["kind"] != "comment" || c.Data["ply"] != float64(1) || c.Data["text"] == "" {
+		t.Errorf("coach_comment = %v", c.Data)
+	}
+	s.waitEvent(t, id, "agent_graded", atPly(2))
+
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 2}, nil); code != 200 {
+		t.Fatalf("ask the coach why: %d", code)
+	}
+	why := s.waitEvent(t, id, "coach_comment", func(d map[string]any) bool { return d["kind"] == "why" })
+	if why.Data["ply"] != float64(2) || why.Data["text"] == "" {
+		t.Errorf("why = %v", why.Data)
+	}
+
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 40}, nil); code != 404 {
+		t.Errorf("unknown move: %d, want 404", code)
+	}
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": "nope", "ply": 1}, nil); code != 404 {
+		t.Errorf("unknown game: %d, want 404", code)
+	}
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 2}, map[string]string{"Origin": "http://evil.example"}); code != 403 {
+		t.Errorf("cross-origin: %d, want 403", code)
+	}
+	var cfg struct {
+		Live struct {
+			Info struct {
+				Coach bool `json:"coach"`
+			} `json:"info"`
+		} `json:"live"`
+	}
+	s.get(t, "/api/config", &cfg)
+	if !cfg.Live.Info.Coach {
+		t.Errorf("/api/config does not say the coach is on: %+v", cfg)
+	}
+}
+
+func TestCoachOffOverHTTP(t *testing.T) {
+	s := newLiveServerWith(t, func(c *game.LiveConfig) { c.NoCoach = true })
+	_, j := s.post(t, "/api/live/new", map[string]any{}, nil)
+	id := j["id"].(string)
+	s.waitEvent(t, id, "human_turn", nil)
+	s.post(t, "/api/live/move", map[string]any{"id": id, "move": "e2e4"}, nil)
+	s.waitEvent(t, id, "human_graded", nil)
+	if code, _ := s.post(t, "/api/live/coach", map[string]any{"id": id, "ply": 1}, nil); code != 404 {
+		t.Errorf("coach off: %d, want 404", code)
 	}
 }

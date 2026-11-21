@@ -76,7 +76,8 @@ type GameRecord struct {
 	StartedAt   string `json:"started_at"`
 	Blunders    int    `json:"blunders"`
 	Mistakes    int    `json:"mistakes"`
-	Mode        string `json:"mode,omitempty"` // "" (engine opponent) or ModeHuman
+	Mode        string `json:"mode,omitempty"`   // "" (engine opponent) or ModeHuman
+	Player      string `json:"player,omitempty"` // human games behind a proxy: the passcode label
 }
 
 // Writer appends records to moves.jsonl and games.jsonl in a directory.

@@ -51,7 +51,41 @@
   #board.locked .sq { cursor: default; }
   #promo { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: 10px; background: #0b122088; }
   #promo[hidden] { display: none; }
-  #promo button { font-size: 9cqw; line-height: 1; padding: 6px 14px; }
+  #promo button { font-size: 9cqw; line-height: 1; padding: 6px 14px; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  #promo .pn { font-size: 14px; font-weight: 600; color: var(--text); }
+  /* Squares named by the move being read (hover, focus or tap): blue where it starts, orange where it lands. */
+  .sq.hl-from { box-shadow: inset 0 0 0 5px #58a6ff; }
+  .sq.hl-to { box-shadow: inset 0 0 0 5px #f0883e; background-image: linear-gradient(#f0883e44, #f0883e44); }
+  .sq.hl-from.hl-to { box-shadow: inset 0 0 0 5px #f0883e; }
+
+  .tip { margin-top: 10px; padding: 8px 12px; border-radius: 8px; border: 1px dashed var(--line); background: var(--panel); min-height: 3.4em; font-size: 15px; }
+  .tip.on { border-style: solid; border-color: var(--accent); }
+  .tip .key { color: var(--muted); font-size: 13px; }
+  .tip i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; vertical-align: -1px; margin-right: 3px; }
+  .pkey { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 14px; color: var(--muted); }
+  .pkey b { color: var(--text); font-size: 20px; font-weight: 400; margin-right: 3px; vertical-align: -1px; }
+  [data-from] { cursor: pointer; }
+  b[data-from], .mv { text-decoration: underline dotted var(--muted); text-underline-offset: 3px; }
+  .pg { margin-right: 4px; }
+
+  .coach { margin-top: 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); border-left: 6px solid var(--muted); }
+  .coach[hidden] { display: none; }
+  .coach .head { display: flex; align-items: baseline; gap: 8px 12px; flex-wrap: wrap; }
+  .coach .title { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .coach .what { font-size: 22px; font-weight: 700; }
+  .coach p { margin: 8px 0 0; }
+  .coach .better { font-size: 17px; }
+  .coach .cost { font-weight: 600; }
+  .coachsay { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+  .coachsay p { margin: 6px 0 0; }
+  .coachsay .says { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-right: 6px; }
+  .coachsay .thinking { color: var(--muted); animation: pulse 1.4s ease-in-out infinite; }
+  .coachsay button.ask { margin-top: 8px; }
+  .gradeNote { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+  details.legend { margin-top: 14px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; background: var(--panel); }
+  details.legend summary { cursor: pointer; font-weight: 600; }
+  details.legend dl { margin: 8px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; font-size: 14px; }
+  details.legend dt { font-weight: 700; } details.legend dd { margin: 0; color: var(--muted); }
 
   .status { margin-top: 12px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); min-height: 3.2em; }
   .status .big { font-size: 20px; font-weight: 700; }
@@ -87,7 +121,7 @@
   .moves { margin-top: 18px; display: grid; grid-template-columns: 3em 1fr 1fr; gap: 2px 8px; font-size: 14px; }
   .moves .n { color: var(--muted); text-align: right; }
   .moves button { text-align: left; padding: 3px 8px; border-radius: 6px; border-color: transparent; background: transparent; font-variant-numeric: tabular-nums; }
-  .moves button.agent { cursor: pointer; } .moves button.human { cursor: default; }
+  .moves button { cursor: pointer; }
   .moves button.sel { border-color: var(--accent); }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
 
@@ -111,9 +145,15 @@
 <main>
   <div>
     <div id="board" aria-label="Chess board" class="locked"><div id="promo" hidden></div></div>
+    <div id="tip" class="tip" aria-live="polite"></div>
+    <div class="pkey" aria-label="What the pieces are called">
+      <span><b>♚</b>King</span><span><b>♛</b>Queen</span><span><b>♜</b>Rook</span><span><b>♝</b>Bishop</span><span><b>♞</b>Knight</span><span><b>♟</b>Pawn</span>
+    </div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
+    <div id="coach" class="coach" aria-live="polite" hidden></div>
     <div class="controls">
       <select id="color" aria-label="Your colour"><option value="white">Play white</option><option value="black">Play black</option></select>
+      <select id="model" aria-label="Which model you play against" hidden></select>
       <button id="newGame" class="primary">New game</button>
       <button id="resign" class="danger" disabled>Resign</button>
       <button id="scripted" disabled></button>
@@ -127,6 +167,10 @@
   <div>
     <div class="panel" id="panel"></div>
     <div class="moves" id="moves"></div>
+    <details class="legend"><summary>What do the grades mean?</summary>
+      <p class="gradeNote" style="margin:8px 0 0">After each move, Stockfish (a very strong chess program) compares it with the best move it can find.</p>
+      <dl id="legend"></dl>
+    </details>
   </div>
 </main>
 <div id="toast" hidden role="alert"></div>
@@ -135,7 +179,32 @@
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
-const EVENTS = ["game_started", "human_turn", "human_moved", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "game_over", "game_saved", "notice", "error"];
+const EVENTS = ["game_started", "human_turn", "human_moved", "human_graded", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "coach_thinking", "coach_comment", "coach_unavailable", "game_over", "game_saved", "notice", "error"];
+// What each grade means, for someone who has never played chess.
+const GRADE_INFO = {
+  best: ["Best move", "The strongest move Stockfish could find."],
+  good: ["Good move", "A sound move. There was a slightly better one, but nothing was lost."],
+  inaccuracy: ["Inaccuracy", "A small slip. A better move existed, and this one gave away a little of the chance to win."],
+  mistake: ["Mistake", "A clear error. It gave the opponent a real advantage."],
+  blunder: ["Blunder", "A serious error, like leaving a piece to be taken for free or missing a checkmate. It gave away a lot of the chance to win."],
+};
+const PIECE_NAME = { k: "King", q: "Queen", r: "Rook", b: "Bishop", n: "Knight", p: "Pawn" };
+const METHOD_TEXT = {
+  Checkmate: "Checkmate: the king was trapped", Resignation: "Resignation", Stalemate: "Stalemate: no legal move, but no check, so it is a draw",
+  ThreefoldRepetition: "The same position came up three times", FivefoldRepetition: "The same position came up five times",
+  FiftyMoveRule: "Fifty moves without a capture or a pawn move", SeventyFiveMoveRule: "Seventy-five moves without a capture or a pawn move",
+  InsufficientMaterial: "Too few pieces left to checkmate", Abandoned: "Game abandoned", IdleTimeout: "No move for too long",
+  TokenBudget: "The agent used up its token budget", MaxPlies: "Move limit reached",
+};
+const gradeTitle = (cls) => GRADE_INFO[cls] ? `${GRADE_INFO[cls][0]}: ${GRADE_INFO[cls][1]}` : "";
+// "Nh3" -> "n", "exd5" -> "p", "O-O" -> "k": the piece a move in notation belongs to.
+const sanPiece = (san) => /^O-O/.test(san) ? "k" : /^[KQRBN]/.test(san) ? san[0].toLowerCase() : "p";
+const sanGlyph = (san) => GLYPH[sanPiece(san)];
+// A move as markup: piece symbol + notation, which shows its plain-language reading and squares on hover, focus or tap.
+function mvHTML(san, ex, extra) {
+  const a = ex ? ` data-from="${esc(ex.from)}" data-to="${esc(ex.to)}" data-text="${esc(ex.text)}" title="${esc(ex.text)}"` : "";
+  return `<span class="mv"${a}${extra || ""}><span class="pg">${sanGlyph(san)}︎</span>${esc(san)}</span>`;
+}
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
@@ -145,7 +214,7 @@ let es = null;
 
 function fresh() {
   return { id: null, humanColor: "white", agentColor: "black", fen: START, legal: {}, myTurn: false, sel: null, last: null,
-           plies: [], agent: {}, graded: {}, thinking: null, follow: true, picked: null, hint: null, scripted: "",
+           plies: [], agent: {}, human: {}, graded: {}, coach: {}, coachPly: null, coachPicked: null, hover: null, pin: null, thinking: null, follow: true, picked: null, hint: null, scripted: "",
            over: null, saved: null, error: null, timeoutMS: 0, sending: false };
 }
 
@@ -157,7 +226,19 @@ async function init() {
     $("#newGame").disabled = true; $("#color").disabled = true; $("#script").disabled = true;
     renderBoard(); return;
   }
-  $("#modelBadge").textContent = `${live.info.provider} / ${live.info.model}`;
+  const models = live.info.models || [];
+  if (models.length > 1) {
+    // A shared deployment offers an allow-list: the player picks the opponent per game.
+    const sel = $("#model");
+    sel.innerHTML = models.map(m => `<option value="${esc(m.id)}">Play against ${esc(m.label)}</option>`).join("");
+    sel.value = live.info.default_model;
+    sel.hidden = false;
+    const tip = () => { const m = models.find(x => x.id === sel.value); $("#modelBadge").textContent = m ? `${m.provider} / ${m.model}` : ""; };
+    sel.addEventListener("change", tip); tip();
+  } else {
+    $("#modelBadge").textContent = `${live.info.provider} / ${live.info.model}`;
+  }
+  renderLegend();
   if (live.info.mock) $("#mockBadge").hidden = false;
   $("#script").value = (live.info.script || []).join(" ");
   const q = new URLSearchParams(location.search);
@@ -180,9 +261,14 @@ async function newGame() {
   const tokens = $("#script").value.split(/[\s,]+/).filter(Boolean);
   $("#newGame").disabled = true;
   try {
-    const j = await api("api/live/new", { human_color: $("#color").value, script: tokens });
+    const body = { human_color: $("#color").value, script: tokens };
+    if (!$("#model").hidden) body.model = $("#model").value;
+    const j = await api("api/live/new", body);
     connect(j.id);
-  } catch (e) { toast("Could not start a game: " + e.message); }
+  } catch (e) {
+    // 409: someone else is playing (the server is exclusive); 429: a game limit is used up.
+    toast(e.status === 409 ? "Someone is playing right now. Try again when their game ends." : "Could not start a game: " + e.message);
+  }
   $("#newGame").disabled = false;
 }
 
@@ -208,6 +294,7 @@ function showConn(msg) { const c = $("#conn"); c.hidden = !msg; c.textContent = 
 function handle(type, d) {
   switch (type) {
     case "game_started":
+      S.model = d.model_label || d.model; $("#modelBadge").textContent = `${d.provider} / ${d.model}`;
       S.humanColor = d.human_color; S.agentColor = d.agent_color; S.fen = d.start_fen; S.timeoutMS = d.move_timeout_ms;
       $("#color").value = d.human_color;
       break;
@@ -217,8 +304,13 @@ function handle(type, d) {
       S.myTurn = true; S.scripted = d.scripted || ""; S.hint = d.scripted_uci || null; S.thinking = null;
       break;
     case "human_moved":
-      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "human" });
+      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "human", explain: d.explain });
+      S.human[d.ply] = { san: d.san, explain: d.explain, grade: null };
+      S.coachPly = d.ply; S.coachPicked = null;
       S.fen = d.fen_after; S.last = d.uci; S.myTurn = false; S.sel = null; S.hint = null; S.scripted = ""; S.sending = false;
+      break;
+    case "human_graded":
+      if (S.human[d.ply]) S.human[d.ply].grade = d.failed ? { failed: true } : d;
       break;
     case "agent_thinking":
       S.thinking = { ply: d.ply, trace_id: d.trace_id, started: d.started_ms, timeout: d.timeout_ms, chat_calls: 0, tool_calls: 0, input_tokens: 0, output_tokens: 0, illegal_attempts: 0 };
@@ -228,13 +320,17 @@ function handle(type, d) {
       if (S.thinking && S.thinking.ply === d.ply) Object.assign(S.thinking, d);
       break;
     case "agent_moved":
-      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "agent" });
+      S.plies.push({ ply: d.ply, san: d.san, uci: d.uci, by: "agent", explain: d.explain });
       S.agent[d.ply] = d; S.fen = d.fen_after; S.last = d.uci; S.thinking = null; S.follow = true; S.picked = null;
       break;
     case "agent_graded":
       if (S.agent[d.ply]) S.agent[d.ply].grade = d;
       S.graded[d.ply] = Date.now();
       break;
+    case "coach_thinking": coachSet(d.ply, d.kind, { state: "thinking" }); break;
+    case "coach_comment": coachSet(d.ply, d.kind, { state: "done", text: d.text }); break;
+    // A comment nobody asked for simply does not appear; an answer somebody asked for says so.
+    case "coach_unavailable": coachSet(d.ply, d.kind, d.kind === "why" ? { state: "failed" } : null); break;
     case "game_over": S.over = d; S.myTurn = false; S.thinking = null; S.hint = null; S.scripted = ""; break;
     case "game_saved": S.saved = d; if (es) es.close(); showConn(""); break;
     case "notice": toast(d.message, d.level === "info" ? "info" : ""); break;
@@ -242,6 +338,42 @@ function handle(type, d) {
   }
   render();
 }
+
+// ---------- the coach ----------
+
+function coachSet(ply, kind, v) {
+  const c = (S.coach[ply] ||= {});
+  if (v) c[kind] = v; else delete c[kind];
+}
+
+// What the coach said about a move, and the button that asks it why. A move can be asked about once it has its grade.
+function coachHTML(ply, graded) {
+  if (!live.info || !live.info.coach) return "";
+  const c = S.coach[ply] || {};
+  const say = (m) => m.state === "thinking" ? `<p class="thinking">The coach is thinking…</p>`
+    : m.state === "failed" ? `<p class="gradeNote">The coach could not answer this time. You can ask again.</p>`
+    : `<p><span class="says">Coach</span>${esc(m.text)}</p>`;
+  let h = "";
+  if (c.comment) h += say(c.comment);
+  if (c.why) h += say(c.why);
+  const asked = c.why && c.why.state !== "failed";
+  if (graded && !asked) h += `<button class="ask" data-ply="${ply}" title="The coach explains this move in plain words, using what Stockfish found">Ask the coach why</button>`;
+  return h ? `<div class="coachsay" aria-live="polite">${h}</div>` : "";
+}
+
+async function askCoach(ply) {
+  coachSet(ply, "why", { state: "thinking" }); render();
+  try { await api("api/live/coach", { id: S.id, ply }); }
+  catch (e) {
+    coachSet(ply, "why", null); render();
+    toast(e.status === 409 ? e.message : e.status === 429 ? "The coach is busy. Try again in a moment." : "The coach is not available: " + e.message);
+  }
+}
+
+document.addEventListener("click", e => {
+  const b = e.target.closest && e.target.closest("button.ask");
+  if (b && S.id) askCoach(+b.dataset.ply);
+});
 
 // ---------- board ----------
 
@@ -271,14 +403,53 @@ function renderBoard() {
       let inner = "";
       if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
       if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
-      html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" role="button" aria-label="${sq}">${inner}</div>`);
+      const label = c === "." ? sq : `${c === c.toUpperCase() ? "White" : "Black"} ${PIECE_NAME[c.toLowerCase()].toLowerCase()} on ${sq}`;
+      html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" role="button" aria-label="${label}"${c === "." ? "" : ` title="${label}"`}>${inner}</div>`);
     }
   }
   board.classList.toggle("locked", !S.myTurn);
   board.innerHTML = html.join("");
   board.appendChild(promo);
   board.querySelectorAll(".sq").forEach(el => el.onclick = () => clickSquare(el.dataset.sq));
+  applyHighlight();
 }
+
+// ---------- reading a move: hover, focus or tap ----------
+//
+// Anything with data-from / data-to / data-text is a move you can read: the
+// plain-language text shows under the board and its squares light up. Tapping
+// keeps it showing (touch screens have no hover); tapping again lets go.
+
+function shownMove() { return S.hover || S.pin; }
+
+function applyHighlight() {
+  const m = shownMove();
+  document.querySelectorAll("#board .sq").forEach(el => {
+    el.classList.toggle("hl-from", !!m && el.dataset.sq === m.from);
+    el.classList.toggle("hl-to", !!m && el.dataset.sq === m.to);
+  });
+  const t = $("#tip");
+  if (m) {
+    t.className = "tip on";
+    t.innerHTML = `${esc(m.text)}.<div class="key"><i style="background:#58a6ff"></i>starts on ${esc(m.from)} · <i style="background:#f0883e"></i>lands on ${esc(m.to)}</div>`;
+  } else {
+    t.className = "tip";
+    t.innerHTML = `<span class="muted">Hover over, or tap, any move to read it in plain words. Its squares light up on the board.</span>`;
+  }
+}
+
+const moveOf = (el) => el && el.dataset ? { from: el.dataset.from, to: el.dataset.to, text: el.dataset.text } : null;
+document.addEventListener("mouseover", e => { const el = e.target.closest && e.target.closest("[data-from]"); if (el) { S.hover = moveOf(el); applyHighlight(); } });
+document.addEventListener("mouseout", e => { const el = e.target.closest && e.target.closest("[data-from]"); if (el && S.hover) { S.hover = null; applyHighlight(); } });
+document.addEventListener("focusin", e => { const el = e.target.closest && e.target.closest("[data-from]"); if (el) { S.hover = moveOf(el); applyHighlight(); } });
+document.addEventListener("focusout", e => { if (S.hover) { S.hover = null; applyHighlight(); } });
+document.addEventListener("click", e => {
+  const el = e.target.closest && e.target.closest("[data-from]");
+  if (!el) return;
+  const m = moveOf(el);
+  S.pin = S.pin && S.pin.text === m.text && S.pin.from === m.from && S.pin.to === m.to ? null : m;
+  S.hover = m; applyHighlight();
+});
 
 function pieceAt(sq) {
   const rows = S.fen.split(" ")[0].split("/");
@@ -306,7 +477,7 @@ function clickSquare(sq) {
 function askPromotion(from, to, moves) {
   const p = $("#promo");
   const white = S.humanColor === "white";
-  p.innerHTML = moves.map(u => `<button data-u="${u}" aria-label="Promote to ${u[4]}"><span class="pc ${white ? "w" : "b"}">${GLYPH[{ q: "q", r: "r", b: "b", n: "n" }[u[4]]]}</span></button>`).join("");
+  p.innerHTML = moves.map(u => `<button data-u="${u}" aria-label="Promote to a ${PIECE_NAME[u[4]].toLowerCase()}"><span class="pc ${white ? "w" : "b"}">${GLYPH[u[4]]}</span><span class="pn">${PIECE_NAME[u[4]]}</span></button>`).join("");
   p.hidden = false;
   p.querySelectorAll("button").forEach(b => b.onclick = (e) => { e.stopPropagation(); p.hidden = true; send(b.dataset.u); });
 }
@@ -329,7 +500,10 @@ async function send(uci) {
 function say(html, cls) { const s = $("#status"); s.className = "status " + (cls || ""); s.innerHTML = html; }
 
 function render() {
-  renderBoard(); renderStatus(); renderPanel(); renderMoves();
+  // The pieces of the page that carry moves are rebuilt on every event: re-read what the pointer is over.
+  const under = document.querySelectorAll("[data-from]:hover");
+  S.hover = under.length ? moveOf(under[under.length - 1]) : null;
+  renderStatus(); renderPanel(); renderMoves(); renderCoach(); renderBoard();
   $("#resign").disabled = !S.id || !!S.over || !!S.error;
   const sc = $("#scripted");
   sc.disabled = !(S.myTurn && S.scripted && !S.sending);
@@ -349,7 +523,8 @@ function renderStatus() {
   if (S.error) return say(`<div class="big">Something went wrong</div><div>${esc(S.error)}</div><div class="muted">The recorded games still work: <a class="link" href="index.html">open them</a>.</div>`, "bad");
   if (S.over) {
     const link = S.saved && S.saved.saved ? ` · <a class="link" href="index.html?game=${encodeURIComponent(S.id)}">Replay this game with its risk timeline ▸</a>` : (S.saved ? "" : ` <span class="muted">· saving…</span>`);
-    return say(`<div class="big">${esc(resultText())}</div><div>${esc(S.over.method)} after ${S.over.plies} plies${S.saved ? ` · ${S.saved.blunders} agent blunders, ${S.saved.mistakes} mistakes` : ""}${link}</div>`, "over");
+    const n = Math.ceil(S.over.plies / 2);
+    return say(`<div class="big">${esc(resultText())}</div><div>${esc(METHOD_TEXT[S.over.method] || S.over.method)} after ${n} move${n === 1 ? "" : "s"}${S.saved ? ` · the agent made ${S.saved.blunders} blunder${S.saved.blunders === 1 ? "" : "s"} and ${S.saved.mistakes} mistake${S.saved.mistakes === 1 ? "" : "s"}` : ""}${link}</div>`, "over");
   }
   if (S.thinking) return say(`<div class="big">The agent is thinking…</div><div class="muted">${S.timeoutMS ? `It has ${(S.timeoutMS / 1000).toFixed(0)}s per move; after that a random legal move is played.` : "No time limit is set."}</div>`, "think");
   if (S.myTurn) return say(`<div class="big">Your move</div><div class="muted">${S.sel ? "Pick a highlighted square." : "Click a piece, then where it goes."}</div>`, "you");
@@ -375,7 +550,7 @@ function renderPanel() {
   if (!S.id) { p.innerHTML = `<div class="muted">Play the agent. Every move it makes is a trace: latency, tokens, tool calls and retries, graded by Stockfish.</div>`; return; }
   if (S.thinking) {
     const t = S.thinking;
-    p.innerHTML = `<div class="movehead"><div class="san">Move ${Math.ceil(t.ply / 2)}${t.ply % 2 === 0 ? "…" : "."}</div><span class="who">agent · ${esc(live.info.model)}</span></div>
+    p.innerHTML = `<div class="movehead"><div class="san">Move ${Math.ceil(t.ply / 2)}${t.ply % 2 === 0 ? "…" : "."}</div><span class="who">agent · ${esc(S.model || live.info.model)}</span></div>
       <div class="clock" id="clock">0.0s</div>
       <div class="bar" id="bar"><i></i></div>
       <div class="chips" id="liveChips"></div>
@@ -389,13 +564,15 @@ function renderPanel() {
     return;
   }
   const g = a.grade;
-  let h = `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${esc(a.san)}</div>
-    ${g ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
-    <span class="who">agent · ${esc(live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
+  let h = `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${mvHTML(a.san, a.explain)}</div>
+    ${g ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
+    <span class="who">agent · ${esc(S.model || live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
   if (a.timed_out) h += `<div class="callout bad"><b>Timed out.</b> The agent did not answer within ${(S.timeoutMS / 1000).toFixed(0)}s, so a random legal move was played. The trace is flagged <code>error.type=timeout</code>.</div>`;
   else if (a.fallback) h += `<div class="callout"><b>Fallback move.</b> The agent never produced a legal move, so a random one was played.</div>`;
+  if (a.explain) h += `<p class="gradeNote">${esc(a.explain.text)}.</p>`;
+  if (g) h += `<p class="gradeNote">${esc(gradeTitle(g.class))}</p>`;
   if (g && ["mistake", "blunder", "inaccuracy"].includes(g.class)) {
-    h += `<p class="muted" style="margin:6px 0 0">Engine preferred <b style="color:var(--text)">${esc(g.best_move)}</b> · win chance dropped ${(g.win_chance_drop * 50).toFixed(0)} points · eval ${fmtCP(g.eval_before_cp)} → ${fmtCP(g.eval_after_cp)}</p>`;
+    h += `<p class="muted" style="margin:6px 0 0">${betterMoveHTML(g, "The agent's")}</p>`;
   }
   h += `<div class="chips">${chip("latency", (a.latency_ms / 1000).toFixed(2) + "s")}${chip("chat calls", a.chat_calls, a.chat_calls > 1)}
     ${chip("in tok", a.input_tokens)}${chip("out tok", a.output_tokens)}${a.reasoning_tokens ? chip("reasoning tok", a.reasoning_tokens) : ""}
@@ -403,6 +580,7 @@ function renderPanel() {
     ${a.finish_length ? chip("finish", "length", true) : ""}${a.fallback && !a.timed_out ? chip("fallback", "random move", true) : ""}
     ${chip("legal moves", a.legal_move_count)}</div>`;
   if (a.reasoning) h += `<div class="reasoning">${esc(a.reasoning)}</div>`;
+  h += coachHTML(ply, !!g);
   p.innerHTML = h;
 }
 
@@ -415,15 +593,57 @@ function renderMoves() {
   for (let i = 0; i < S.plies.length; i += 2) {
     const cell = (pl) => {
       if (!pl) return "<span></span>";
-      const g = S.agent[pl.ply] && S.agent[pl.ply].grade;
-      const dot = pl.by === "agent" ? `<span class="dot" style="background:${g ? CLASS_COLOR[g.class] : "var(--muted)"}"></span>` : "";
-      const sel = pl.by === "agent" && (S.picked ?? lastAgentPly()) === pl.ply && !S.thinking ? "sel" : "";
-      return `<button class="${pl.by} ${sel}" ${pl.by === "agent" ? `data-ply="${pl.ply}"` : "tabindex=-1"}>${dot}${esc(pl.san)}</button>`;
+      const g = pl.by === "agent" ? S.agent[pl.ply] && S.agent[pl.ply].grade : S.human[pl.ply] && S.human[pl.ply].grade;
+      const real = g && !g.failed;
+      const dot = `<span class="dot" style="background:${real ? CLASS_COLOR[g.class] : "var(--muted)"}" title="${real ? esc(gradeTitle(g.class)) : "No grade yet"}"></span>`;
+      const sel = (pl.by === "agent" ? (S.picked ?? lastAgentPly()) === pl.ply && !S.thinking : coachPly() === pl.ply) ? "sel" : "";
+      const ex = pl.explain;
+      const a = ex ? ` data-from="${esc(ex.from)}" data-to="${esc(ex.to)}" data-text="${esc(ex.text)}" title="${esc(ex.text)}" aria-label="${esc(ex.text)}"` : "";
+      return `<button class="${pl.by} ${sel}" data-ply="${pl.ply}" data-by="${pl.by}"${a}>${dot}<span class="pg">${sanGlyph(pl.san)}︎</span>${esc(pl.san)}</button>`;
     };
     rows.push(`<span class="n">${i / 2 + 1}.</span>${cell(S.plies[i])}${cell(S.plies[i + 1])}`);
   }
   m.innerHTML = rows.join("");
-  m.querySelectorAll("button[data-ply]").forEach(b => b.onclick = () => { S.picked = +b.dataset.ply; S.thinking ? null : render(); });
+  m.querySelectorAll("button[data-ply]").forEach(b => b.onclick = () => {
+    if (b.dataset.by === "human") S.coachPicked = +b.dataset.ply; else S.picked = +b.dataset.ply;
+    S.thinking ? renderCoach() : render();
+  });
+}
+
+// ---------- feedback on the human's moves ----------
+
+const coachPly = () => S.coachPicked ?? S.coachPly;
+
+function betterMoveHTML(g, whose) {
+  const c = g.coach, lost = Math.round(g.win_pct_lost || 0);
+  let h = "";
+  if (c) h += `<span class="better">A better move was <b style="color:var(--text)" data-from="${esc(c.best.from)}" data-to="${esc(c.best.to)}" data-text="${esc(c.best.text)}" title="${esc(c.best.text)}" tabindex="0">${sanGlyph(c.best_san)}︎ ${esc(c.best_san)}</b> (${esc(c.best.text.replace(/\. .*$/, ""))}).</span> `;
+  if (c && c.advice) h += `<span style="color:var(--text)">${esc(c.advice)}</span> `;
+  h += `<span class="cost" style="color:var(--text)">${whose} move cost about ${lost < 1 ? "less than 1" : lost}% of ${whose === "Your" ? "your" : "its"} winning chance.</span>`;
+  return h;
+}
+
+function renderCoach() {
+  const el = $("#coach"), ply = coachPly(), h = ply && S.human[ply];
+  if (!h) { el.hidden = true; return; }
+  const g = h.grade, ok = g && !g.failed;
+  el.hidden = false;
+  el.style.borderLeftColor = ok ? CLASS_COLOR[g.class] : "var(--muted)";
+  const n = Math.ceil(ply / 2);
+  let html = `<div class="head"><span class="title">Your move ${n}</span><span class="what">${mvHTML(h.san, h.explain)}</span>
+    ${ok ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(GRADE_INFO[g.class][0])}</span>` : g ? "" : `<span class="cls pending">grading…</span>`}</div>`;
+  if (h.explain) html += `<p>${esc(h.explain.text)}.</p>`;
+  if (ok) {
+    html += `<p class="gradeNote">${esc(GRADE_INFO[g.class][1])}</p>`;
+    if (["inaccuracy", "mistake", "blunder"].includes(g.class)) html += `<p>${betterMoveHTML(g, "Your")}</p>`;
+  } else if (g) html += `<p class="gradeNote">Stockfish could not grade this move. The game goes on.</p>`;
+  html += coachHTML(ply, ok);
+  el.innerHTML = html;
+}
+
+function renderLegend() {
+  $("#legend").innerHTML = Object.keys(GRADE_INFO).map(k =>
+    `<dt><span class="dot" style="background:${CLASS_COLOR[k]}"></span>${esc(GRADE_INFO[k][0])}</dt><dd>${esc(GRADE_INFO[k][1])}</dd>`).join("");
 }
 
 // The thinking clock and the trace-ready countdown tick on their own, so the
