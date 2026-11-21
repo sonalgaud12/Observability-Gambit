@@ -10,6 +10,10 @@ the analysis asks whether the traces saw the blunder coming.
 
 Everything is Go, and everything runs locally.
 
+You can also take Stockfish's seat: in [human mode](#human-mode-play-the-agent-live)
+you play the LLM agent yourself from the stage UI, with the agent's thinking,
+its move and a link to that move's trace shown live.
+
 ```
                  ┌─────────────── gambit play ───────────────┐
  OpenAI-compat.  │  agent ──chat/tools/retries──▶ LLM         │
@@ -27,6 +31,9 @@ Everything is Go, and everything runs locally.
                                 │
                              Grafana
 ```
+
+In human mode, a person replaces the Stockfish opponent; the agent, grader and
+telemetry pipeline are the same.
 
 ## Trace shape
 
@@ -97,6 +104,71 @@ Useful knobs (`./bin/gambit play -h` for all):
 of roughly 500–1,500 input tokens. Run 5 games first and read the token totals
 in `data/moves.jsonl` before launching hundreds.
 
+## Human mode (play the agent live)
+
+`gambit serve --live` lets a person play the LLM agent instead of Stockfish,
+from the stage UI. Recorded-game replay and Stockfish games are unchanged, and
+nothing changes unless you pass `--live`.
+
+```bash
+make up                    # Collector, Jaeger, ClickHouse, Prometheus, Grafana
+./bin/gambit serve --live  # then open http://localhost:8080
+```
+
+<!-- TODO: add the Makefile target for human mode (if any) and the model/endpoint env vars it needs. `./bin/gambit serve -h` lists the flags. -->
+
+Click a piece, then a square, to move. After each of your moves the UI shows:
+
+- the agent **thinking**, with a live clock
+- the agent's **move**, with latency, tokens and illegal tries as live meters
+- an **Open trace** link that jumps to that exact move's trace in Jaeger
+
+How it behaves:
+
+- **Per-move timeout.** If the model is slow or stuck, a recorded fallback move
+  is played and flagged (`fallback: true`, `timed_out: true`), so a game never
+  hangs on stage. <!-- TODO: name the timeout flag and its default. -->
+- **Move validation.** Illegal moves are refused (`422`), out-of-turn moves are
+  refused (`409`), unknown game ids return `404`, and cross-origin POSTs are
+  rejected (`403`).
+- **Resumable stream.** Live events (agent thinking, agent moved, graded,
+  game over, game saved) arrive over SSE, and a dropped connection resumes from
+  `Last-Event-ID`. Agent events carry `trace_id`, latency, tokens and illegal
+  tries.
+- **Traces are kept.** Human-mode games produce the same one-trace-per-agent-move
+  shape, are graded by Stockfish and saved to the dataset, so `make analyze` and
+  `make sql` include them. <!-- TODO: say how to tell human games apart (the new semconv attribute) and whether analyze filters them. -->
+
+Under the hood, the opponent is an interface (`internal/game/opponent.go`) with
+a Stockfish implementation and a human one fed over HTTP, and the agent move is
+split into decide and grade so the live session (`internal/game/live.go`) can
+stream the decision before grading finishes.
+
+## Send to Grafana Cloud (optional)
+
+By default nothing leaves your machine. To also send the traces to a Grafana
+Cloud stack, copy `.env.cloud.example` to `.env.cloud` (git-ignored), fill in
+the OTLP endpoint, instance ID and token, then use `make up-cloud` instead of
+`make up`. The local pipelines (ClickHouse, Jaeger, file, spanmetrics) are
+unchanged; `collector/cloud.yaml` adds one more trace pipeline beside them.
+
+It does three things on the Cloud copy only:
+
+- Copies `gen_ai.input.messages` / `gen_ai.output.messages` to
+  `gambit.prompt.input` / `gambit.prompt.output`. Grafana Cloud intentionally
+  strips the original two attributes from stored spans (open-source Tempo
+  keeps them), so this keeps the prompts queryable.
+- Sets `agento11y.record=true`, so conversations also show up in Grafana Cloud
+  Agent Observability.
+- Adds `gambit.run` and `gambit.model` resource attributes (from `GAMBIT_RUN`
+  and `GAMBIT_MODEL`, defaulting to `local` and `unknown`) so dashboards can tell
+  runs apart.
+
+If any of the three required settings is missing, `make up-cloud` stops with an
+error rather than starting a Collector that quietly drops spans. If the
+endpoint or token is wrong, the Collector logs `Exporting failed` for
+`otlphttp/grafana` (`make logs`), while the local stores keep working.
+
 ## Analysis
 
 ```bash
@@ -157,6 +229,12 @@ ground-truth label to the trace, then join it back to the trace's own telemetry.
    exemplar dot on the latency panel to land on a real trace.
 6. Close with the report's model table: where telemetry beat the baseline, and where it didn't.
 
+**Optional: audience round** (needs a live LLM endpoint and a network connection)
+
+Run `./bin/gambit serve --live` and invite someone to play the agent, with the
+thinking clock and **Open trace** links on screen. The per-move timeout keeps the
+game moving if the model stalls. Keep the recorded flow above as your fallback.
+
 Keyboard: <kbd>←</kbd>/<kbd>→</kbd> step, <kbd>space</kbd> play, <kbd>b</kbd> next blunder.
 Every state is a URL (`?game=…&ply=…`), so you can bookmark exact moments.
 
@@ -192,13 +270,13 @@ version you present; these conventions are moving.
 ## Repo layout
 
 ```
-cmd/gambit/              CLI: play, analyze, serve, extract-traces
+cmd/gambit/              CLI: play, analyze, serve (--live for human mode), extract-traces
 internal/agent/          the LLM player: prompts, tools, retries, validation spans
 internal/llm/            OpenAI-compatible client, gen_ai instrumentation, mock model
 internal/engine/         minimal UCI client for Stockfish
-internal/game/           game runner, trace shape, grading and classification
+internal/game/           game runner, opponents (Stockfish, human), live session, grading and classification
 internal/analysis/       features, logistic regression, AUC + bootstrap, report
-internal/web/            stage UI (embedded single page)
+internal/web/            stage UI (embedded), live-game endpoints and SSE stream
 internal/semconv/        every attribute key in one place
 internal/otlpjson/       cut one game's traces out of a recording
 collector/               Collector pipeline + replay config
