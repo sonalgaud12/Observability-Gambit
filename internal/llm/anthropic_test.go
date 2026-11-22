@@ -443,3 +443,19 @@ func TestAnthropicTelemetry(t *testing.T) {
 		t.Errorf("error.type = %q", e)
 	}
 }
+
+func TestAnthropicEmptyProviderContentIsRebuilt(t *testing.T) {
+	c, bodies, _ := serve(t, 200, thinkingAnswer)
+	req := hello()
+	req.Messages = append(req.Messages,
+		Message{Role: "assistant", Content: "MOVE: e9", ProviderContent: json.RawMessage(`[]`)},
+		Message{Role: "user", Content: "illegal"})
+	if _, err := c.Chat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	msgs := (*bodies)[0]["messages"].([]any)
+	blocks, ok := msgs[1].(map[string]any)["content"].([]any)
+	if !ok || len(blocks) != 1 || blocks[0].(map[string]any)["text"] != "MOVE: e9" {
+		t.Errorf("assistant turn = %v", msgs[1])
+	}
+}

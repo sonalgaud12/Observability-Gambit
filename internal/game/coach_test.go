@@ -2,7 +2,11 @@ package game
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -467,4 +471,41 @@ func TestCleanCoachText(t *testing.T) {
 	if !ok || len([]rune(got)) > coachMaxChars+1 || !strings.HasSuffix(got, ".") {
 		t.Errorf("long text: %d runes, ok=%v, ends %q", len([]rune(got)), ok, got[len(got)-10:])
 	}
+}
+
+// On the Anthropic client the coach asks for low effort and a budget with room
+// for the answer after thinking, and reads the text block past a thinking block.
+func TestCoachOnAnthropicClient(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		b, _ := io.ReadAll(r.Body)
+		json.Unmarshal(b, &m)
+		sys, _ := m["system"].(string)
+		if !strings.Contains(sys, "chess coach") {
+			io.WriteString(w, `{"id":"m","model":"x","stop_reason":"end_turn","content":[{"type":"text","text":"MOVE: e5"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+			return
+		}
+		got = m
+		io.WriteString(w, `{"id":"m","model":"x","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"hmm","signature":"s"},{"type":"text","text":"Nice start! You opened up the centre."}],"usage":{"input_tokens":50,"output_tokens":60,"output_tokens_details":{"thinking_tokens":30}}}`)
+	}))
+	defer srv.Close()
+	f := newLive(t, func(c *LiveConfig) {
+		c.NewClient = func(int64, llm.Brain) llm.Client { return llm.NewAnthropic(srv.URL, "k") }
+		c.Agent = agent.Config{Model: "claude-haiku-5-5", Temperature: -1, MaxTokens: 256, MaxRetries: 3}
+	})
+	s, _ := f.live.Start(StartOptions{})
+	playE4(t, s)
+	c := waitFor(t, s, 0, "coach_comment", nil)
+	if text, _ := c.data["text"].(string); !strings.Contains(text, "Nice start") {
+		t.Errorf("coach text = %v", c.data)
+	}
+	if got["max_tokens"] != float64(coachThinkingMax) {
+		t.Errorf("max_tokens = %v", got["max_tokens"])
+	}
+	if oc, _ := got["output_config"].(map[string]any); oc["effort"] != "low" {
+		t.Errorf("output_config = %v", got["output_config"])
+	}
+	s.Abort()
+	<-s.Done()
 }

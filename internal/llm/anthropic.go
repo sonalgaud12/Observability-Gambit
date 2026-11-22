@@ -306,7 +306,7 @@ func toAnthropicMessages(ms []Message) (string, []anMessage, error) {
 		case "tool":
 			results = append(results, anBlock{Type: "tool_result", ToolUseID: m.ToolCallID, Content: m.Content})
 		case "assistant":
-			if len(m.ProviderContent) > 0 {
+			if pc := bytes.TrimSpace(m.ProviderContent); len(pc) > 0 && !bytes.Equal(pc, []byte("[]")) {
 				out = append(out, anMessage{Role: "assistant", Content: m.ProviderContent})
 				continue
 			}
