@@ -1,6 +1,6 @@
 # The Observability Gambit
 #
-#   make up          start the backend stack (Collector, Jaeger, ClickHouse, Prometheus, Grafana)
+#   make up          start the backend stack (Collector, Tempo, ClickHouse, Prometheus, Grafana)
 #   make up-cloud    same, plus an optional Grafana Cloud route (README: Send to Grafana Cloud)
 #   make up-prod     the cloud play stack: game server + Caddy + the above (deploy/gcp/README.md)
 #   make rehearse    50 mock games, no API key (synthetic correlations: rehearsal only)
@@ -41,7 +41,7 @@ up:
 	mkdir -p data/traces data/events data/replay out
 	docker compose up -d
 	@echo "Grafana    http://localhost:3000"
-	@echo "Jaeger     http://localhost:16686"
+	@echo "Tempo      http://localhost:3200 (view traces in Grafana Explore)"
 	@echo "Prometheus http://localhost:9090"
 
 # Same stack plus the Grafana Cloud route. Needs .env.cloud (see .env.cloud.example).
@@ -95,7 +95,7 @@ replay: build
 		cp data/traces/traces.jsonl data/replay/all.jsonl; \
 	fi
 	docker compose --profile replay up -d replay
-	@echo "Replaying into the Collector; traces appear in Jaeger after the tail-sampling wait (~15s)."
+	@echo "Replaying into the Collector; traces appear in Tempo after the tail-sampling wait (~15s)."
 
 sql:
 	docker compose exec -T clickhouse clickhouse-client --multiquery --format PrettyCompact < sql/correlation.sql

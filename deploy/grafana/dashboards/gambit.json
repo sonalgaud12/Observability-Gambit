@@ -329,7 +329,7 @@
           "exemplar": false
         }
       ],
-      "description": "Exemplars link each bucket to a real trace in Jaeger. Note the gap: invoke_agent ends before the grade exists, so its metrics cannot be split by move class.",
+      "description": "Exemplars link each bucket to a real trace in Tempo. Note the gap: invoke_agent ends before the grade exists, so its metrics cannot be split by move class.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -408,7 +408,7 @@
           "refId": "A"
         }
       ],
-      "description": "Straight from ClickHouse (all traces, unsampled). Click a trace ID to open it in Jaeger.",
+      "description": "Straight from ClickHouse (all traces, unsampled). Click a trace ID to open it in Tempo.",
       "datasource": {
         "type": "grafana-clickhouse-datasource",
         "uid": "clickhouse"
@@ -426,8 +426,8 @@
                 "id": "links",
                 "value": [
                   {
-                    "title": "Open trace in Jaeger",
-                    "url": "http://localhost:16686/trace/${__value.raw}",
+                    "title": "Open trace in Tempo",
+                    "url": "/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22query%22%3A%22${__value.raw}%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-30d%22%2C%22to%22%3A%22now%22%7D%7D%7D&orgId=1",
                     "targetBlank": true
                   }
                 ]

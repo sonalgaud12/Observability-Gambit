@@ -262,12 +262,12 @@ func serve(args []string) error {
 	addr := fs.String("addr", "localhost:8080", "listen address")
 	data := fs.String("data", "data", "dataset directory")
 	model := fs.String("model", "out/model.json", "model bundle from `gambit analyze`")
-	traceURL := fs.String("trace-url", envOr("GAMBIT_TRACE_URL", "http://localhost:16686/trace/{trace_id}"),
-		"trace deep link; {trace_id} is replaced (Grafana/Tempo works too)")
+	traceURL := fs.String("trace-url", envOr("GAMBIT_TRACE_URL", web.ExploreTraceURL("http://localhost:3000")),
+		"trace deep link; {trace_id} is replaced. Default: the trace in Grafana Explore on the Tempo datasource")
 	live := fs.Bool("live", false, "human mode: play the agent from the stage UI (needs Stockfish and a model; see the model flags)")
 	moveTimeout := fs.Duration("move-timeout", 15*time.Second, "live: hard cap on one agent move; on timeout a random legal move is played and flagged (0 = none)")
 	script := fs.String("script", "", "live: scripted opening, the human's moves separated by spaces or commas, e.g. \"e4 Nf3 Bc4\"")
-	traceDelay := fs.Duration("trace-delay", 20*time.Second, "live: wait this long after a move is graded before offering its trace link (the Collector's tail sampling holds traces back about 15s; use 0 when --trace-url points at Tempo/Grafana)")
+	traceDelay := fs.Duration("trace-delay", 20*time.Second, "live: wait this long after a move is graded before offering its trace link (the Collector's tail sampling holds traces back about 15s before Tempo gets them; use 0 only when --trace-url points at a backend without tail sampling)")
 	// These only matter with --live. `serve --model` is the analysis bundle,
 	// so the live agent's model is --agent-model.
 	m := registerModelFlags(fs, "agent-model")

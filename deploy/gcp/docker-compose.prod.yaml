@@ -32,9 +32,9 @@ services:
     restart: unless-stopped
     logging: *logging
 
-  jaeger:
+  tempo:
     ports: !override
-      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:3200:3200"
     restart: unless-stopped
     logging: *logging
 
@@ -57,6 +57,8 @@ services:
     environment:
       # The base file runs anonymous as Admin: fine on a laptop, never on a public host.
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      # Explore (where the trace links land) is an Editor permission unless viewers_can_edit.
+      GF_USERS_VIEWERS_CAN_EDIT: "true"
       GF_SERVER_ROOT_URL: https://dash.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}
     restart: unless-stopped
     logging: *logging
@@ -77,7 +79,7 @@ services:
         --idle-timeout ${GAMBIT_IDLE_TIMEOUT:-3m}
         --game-token-budget ${GAMBIT_GAME_TOKEN_BUDGET:-300000}
         --move-timeout 15s
-        --trace-url "https://trace.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}/trace/{trace_id}"
+        --trace-url "https://dash.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22query%22%3A%22{trace_id}%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22now-30d%22%2C%22to%22%3A%22now%22%7D%7D%7D&orgId=1"
         $${GAMBIT_EXTRA_ARGS:-}
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
@@ -108,7 +110,7 @@ services:
       - ./deploy/gcp/Caddyfile:/etc/caddy/Caddyfile:ro
       - ${GAMBIT_AUTH_DIR:-/run/gambit/caddy}:/etc/caddy/auth:ro # users.caddy: one name + bcrypt hash per passcode
       - caddy-data:/data
-    depends_on: [gambit, jaeger, grafana]
+    depends_on: [gambit, grafana]
     restart: unless-stopped
     logging: *logging
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end check of the prod stack on a laptop (mock model, no API spend):
 two passcodes, the one-game lock, SSE through Caddy, both model options, the
-passcode label on traces, trace links in Jaeger, the idle timeout, the allow-list.
+passcode label on traces, trace links in Grafana Explore on Tempo, the idle timeout, the allow-list.
 
 usage: e2e.py DIR   DIR holds pass.sonal and pass.nic (written by local-test.sh);
                     E2E_PORT is Caddy's https port (default 28443);
@@ -94,17 +94,28 @@ def play_one(user, model, label):
     check("SSE events arrive as they happen", len(arrivals) == 2 and arrivals[1] - arrivals[0] > 0.0)
     return gid, traces
 
-def jaeger_trace(user, tid, wait=60):
+def tempo_trace(user, tid, wait=60):
+    """Fetch the trace the way Explore does: Grafana's datasource proxy to Tempo."""
     end = time.time() + wait
     while time.time() < end:
-        st, j, _ = req(user, "GET", f"/api/traces/{tid}", host=f"trace.{HOST}")
-        if st == 200 and isinstance(j, dict) and j.get("data"): return j["data"][0]
+        st, j, _ = req(user, "GET", f"/api/datasources/proxy/uid/tempo/api/traces/{tid}",
+                       host=f"dash.{HOST}", headers={"Accept": "application/json"})
+        if st == 200 and isinstance(j, dict) and (j.get("batches") or j.get("resourceSpans")): return j
         time.sleep(3)
     return None
 
+def spans_of(tr):
+    out = []
+    for b in tr.get("batches") or tr.get("resourceSpans") or []:
+        for ss in b.get("scopeSpans") or b.get("instrumentationLibrarySpans") or []:
+            out.extend(ss.get("spans", []))
+    return out
+
 def tag(span, k):
-    for t in span["tags"]:
-        if t["key"] == k: return t["value"]
+    for t in span.get("attributes", []):
+        if t["key"] == k:
+            v = t["value"]
+            return next(iter(v.values()))
 
 def main():
     games = {}
@@ -112,20 +123,23 @@ def main():
     time.sleep(2)
     games["nic"] = play_one("nic", "haiku-5.5", "nic")
 
-    print("-- waiting for the Collector's tail sampling window, then Jaeger --", flush=True)
+    print("-- waiting for the Collector's tail sampling window, then Tempo --", flush=True)
     for user, want_model in (("sonal", "mock-gpt-6-luna"), ("nic", "mock-claude-haiku-5-5")):
         gid, traces = games[user]
-        tr = jaeger_trace(user, traces[0])
-        check(f"trace link target for {user}'s move exists in Jaeger", tr is not None, traces[0])
+        tr = tempo_trace(user, traces[0])
+        check(f"trace link target for {user}'s move is stored in Tempo", tr is not None, traces[0])
         if tr:
-            root = [s for s in tr["spans"] if s["operationName"] == "chess.move"][0]
-            dec = [s for s in tr["spans"] if s["operationName"].startswith("invoke_agent")][0]
+            sp = spans_of(tr)
+            root = [s for s in sp if s["name"] == "chess.move"][0]
+            dec = [s for s in sp if s["name"].startswith("invoke_agent")][0]
             check(f"  gambit.player.label = {user} on root and decision span", tag(root, "gambit.player.label") == user and tag(dec, "gambit.player.label") == user)
             check(f"  gen_ai.request.model = {want_model}", tag(root, "gen_ai.request.model") == want_model and tag(dec, "gen_ai.request.model") == want_model)
             check("  gambit.run.mode = human", tag(root, "gambit.run.mode") == "human")
     # the trace URL the UI was given
     st, cfg, _ = req("nic", "GET", "/api/config")
-    check("trace_url points at the public trace host", cfg["trace_url"] == f"https://trace.{HOST}/trace/{{trace_id}}", cfg["trace_url"])
+    tu = cfg["trace_url"]
+    check("trace_url opens Grafana Explore on the Tempo datasource", tu.startswith(f"https://dash.{HOST}:{PORT}/explore?") or tu.startswith(f"https://dash.{HOST}/explore?"), tu)
+    check("trace_url carries the trace id and a 30-day range", tu.count("{trace_id}") == 1 and "now-30d" in tu, tu)
 
     # idle timeout (20s in this test): start, never move, the slot frees itself
     st, out, _ = req("sonal", "POST", "/api/live/new", {})

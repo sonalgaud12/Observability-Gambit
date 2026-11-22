@@ -2,7 +2,7 @@
 #
 #   chess-agent --OTLP--> [this Collector]
 #        traces/all      -> ClickHouse (SQL correlation), OTLP-JSON file (dataset + replay), spanmetrics
-#        traces/sampled  -> tail_sampling -> Jaeger  (only the interesting traces)
+#        traces/sampled  -> tail_sampling -> Tempo  (only the interesting traces)
 #        metrics         -> Prometheus (RED metrics per model and per move class, with exemplars)
 #        metrics/genai   -> Prometheus (the SDK's gen_ai.* convention metrics)
 #        logs/genai      -> ClickHouse + OTLP-JSON file (gen_ai.* events, e.g. gen_ai.evaluation.result)
@@ -84,8 +84,8 @@ connectors:
     metrics_flush_interval: 15s
 
 exporters:
-  otlp/jaeger:
-    endpoint: jaeger:4317
+  otlp/tempo:
+    endpoint: tempo:4317
     tls:
       insecure: true
 
@@ -136,7 +136,7 @@ service:
     traces/sampled:
       receivers: [otlp]
       processors: [memory_limiter, tail_sampling, batch]
-      exporters: [otlp/jaeger]
+      exporters: [otlp/tempo]
     metrics/spanmetrics:
       receivers: [spanmetrics]
       processors: [batch]

@@ -14,7 +14,7 @@
 # Variables (no defaults for the first four: nothing here knows your project)
 #   PROJECT       GCP project id
 #   DOMAIN        public hostname of the game, e.g. gambit.example.org; the script also
-#                 expects trace.$DOMAIN and dash.$DOMAIN (all three get the same IP)
+#                 expects dash.$DOMAIN (both get the same IP)
 #   REF           git commit or tag of the repo to run on the VM (pin it: boots are reproducible)
 #   GRAFANA_CLOUD_OTLP_ENDPOINT, GRAFANA_CLOUD_INSTANCE_ID   the shared Grafana Cloud stack
 #                 (not secrets; the token is a Secret Manager secret, below)
@@ -133,7 +133,7 @@ if [ "$what" = infra ]; then
 #      printf '%s' "\$GC_OTLP_TOKEN"   | gcloud secrets versions add og-gcloud-otlp-token --project=$PROJECT --data-file=-
 # 2. Add passcodes (each prints its passcode once):
 #      PROJECT=$PROJECT ./rotate-passcode.sh add sonal
-# 3. DNS: three A records to $ip for $DOMAIN, trace.$DOMAIN and dash.$DOMAIN (README: DNS).
+# 3. DNS: two A records to $ip for $DOMAIN and dash.$DOMAIN (README: DNS).
 # 4. Reboot the VM (or run fetch-secrets.sh + systemctl restart gambit) so it picks up the secrets,
 #    then ./provision.sh monitoring apply.
 EOF

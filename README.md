@@ -20,10 +20,10 @@ Everything is Go, and everything runs locally.
                        │  OTel Collector  │
                        └─┬──────┬──────┬──┘
      traces/all ─────────┘      │      └──────── traces/sampled
-     ClickHouse + OTLP-JSON     │                tail_sampling ─▶ Jaeger
+     ClickHouse + OTLP-JSON     │                tail_sampling ─▶ Tempo
      (SQL correlation, replay)  │                (blunders, retries, errors,
                                 │                 slow decisions, 10% baseline)
-                     spanmetrics ─▶ Prometheus (exemplars ─▶ Jaeger)
+                     spanmetrics ─▶ Prometheus (exemplars ─▶ Tempo)
                                 │
                              Grafana
 ```
@@ -60,13 +60,13 @@ lists every key, metric and event, and what the conventions do not cover.
 Needs Go 1.23+, Docker, and Stockfish (`brew install stockfish` / `apt install stockfish`).
 
 ```bash
-make up          # Collector, Jaeger, ClickHouse, Prometheus, Grafana
+make up          # Collector, Tempo, ClickHouse, Prometheus, Grafana
 make rehearse    # 50 games with the offline mock model
 make analyze     # out/report.md + out/model.json
 make serve       # stage UI on http://localhost:8080
 ```
 
-Then open Grafana (http://localhost:3000), Jaeger (http://localhost:16686) and the UI.
+Then open Grafana (http://localhost:3000; traces are in Explore, on the Tempo datasource) and the UI.
 
 > **About the mock model.** It has a hidden "stress" variable that rises during
 > the game and drives *both* its telemetry and its blunders, so every
@@ -109,7 +109,7 @@ in `data/moves.jsonl` before launching hundreds.
 By default nothing leaves your machine. To also send the traces to a Grafana
 Cloud stack, copy `.env.cloud.example` to `.env.cloud` (git-ignored), fill in
 the OTLP endpoint, instance ID and token, then use `make up-cloud` instead of
-`make up`. The local pipelines (ClickHouse, Jaeger, file, spanmetrics) are
+`make up`. The local pipelines (ClickHouse, Tempo, file, spanmetrics) are
 unchanged; `collector/cloud.yaml` adds a trace, a metrics and a logs pipeline
 beside them.
 
@@ -179,8 +179,10 @@ ground-truth label to the trace, then join it back to the trace's own telemetry.
 1. Collect real games a week ahead, then `make analyze`.
 2. In the UI, games are sorted by their worst blunder. Pick the one with the best
    story (ideally a hanging queen with risk climbing in the moves before it).
-3. `make replay GAME=<id>` so that game's traces are fresh in Jaeger, and check
-   that the UI's "Open trace" links resolve.
+3. `make replay GAME=<id>` so that game's traces are fresh in Tempo, and check
+   that the UI's "Open trace" links resolve. A replay goes through tail sampling
+   again, so only the interesting moves (blunders, mistakes, retries, errors) and
+   about 10% of the rest are kept: a link on a sampled-out move reads "not found".
 4. Record a screen capture of the whole flow as a fallback.
 
 **On stage** (no live LLM calls, no Wi-Fi dependency)
@@ -359,17 +361,23 @@ in plain words, in addition to the grade and the rule-based reason above.
 ### Trace links and the Collector
 
 The Collector's tail sampler holds a trace for `decision_wait` (15s) before
-Jaeger gets it, so a trace is not there the instant the move lands. The link
-therefore appears `--trace-delay` (20s) after the grade, with a countdown. Three
+Tempo gets it, so a trace is not there the instant the move lands. The link
+therefore appears `--trace-delay` (20s) after the grade, with a countdown. These
 things keep it honest:
 
 - A `keep-human-games` policy keeps every human trace, instead of the 10% baseline.
 - The sampler decides `decision_wait` after a trace's first span arrives, so a move
   whose spans straggle in later than that (a long chain of retries, a raised
-  `--move-timeout`) can reach Jaeger incomplete or not at all. The default 15s cap
+  `--move-timeout`) can reach Tempo incomplete or not at all. The default 15s cap
   fits; if you raise it, raise `decision_wait` in `collector/otel-collector.yaml` too.
-- If `--trace-url` points at a backend without tail sampling (Grafana Cloud or Tempo),
-  pass `--trace-delay 0`.
+- The default `--trace-url` opens the trace in Grafana Explore on the Tempo datasource,
+  over the last 30 days (Tempo only searches blocks inside the query's time range, so
+  Explore's default one-hour range makes an older trace read "not found"). Tempo is
+  fed by the sampled pipeline, so the delay still applies; pass `--trace-delay 0`
+  only for a `--trace-url` that reads a backend without tail sampling (Grafana Cloud's
+  traces are unsampled).
+- Tempo stores traces on the `tempo` named volume, so they survive `make down` and
+  restarts (`docker compose down -v` deletes them).
 
 ### API
 

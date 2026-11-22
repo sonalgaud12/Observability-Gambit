@@ -10,8 +10,8 @@
 # request and passes it to the game as X-Gambit-User, which labels each game's
 # traces. The passcode itself is never logged (Caddy redacts Authorization).
 #
-# GAMBIT_DOMAIN gambit.example.org serves gambit.example.org,
-# trace.gambit.example.org and dash.gambit.example.org. A name ending in
+# GAMBIT_DOMAIN gambit.example.org serves gambit.example.org and
+# dash.gambit.example.org. A name ending in
 # .localhost gets Caddy's own local certificate: that is how the stack is
 # tested on a laptop.
 
@@ -44,16 +44,8 @@
 	}
 }
 
-# The "Open trace" links in the game land here.
-trace.{$GAMBIT_DOMAIN} {
-	import log_requests
-	import /etc/caddy/auth/users.caddy
-	reverse_proxy jaeger:16686 {
-		header_up -Authorization
-	}
-}
-
-# Dashboards (Grafana's anonymous role is Viewer; the passcode decides who gets there).
+# Dashboards, and the "Open trace" links (Grafana Explore on the Tempo datasource).
+# Grafana's anonymous role is Viewer; the passcode decides who gets there.
 dash.{$GAMBIT_DOMAIN} {
 	import log_requests
 	import /etc/caddy/auth/users.caddy

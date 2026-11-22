@@ -71,7 +71,7 @@ func newLiveServerWith(t *testing.T, mutate func(*game.LiveConfig)) *liveServer 
 		t.Fatal(err)
 	}
 	t.Cleanup(live.Close)
-	_, h, err := newServer(Options{Addr: "x", DataDir: dir, TraceURL: "http://jaeger/trace/{trace_id}", Live: live, TraceDelay: 20 * time.Second})
+	_, h, err := newServer(Options{Addr: "x", DataDir: dir, TraceURL: ExploreTraceURL("http://grafana"), Live: live, TraceDelay: 20 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,8 @@ func TestHumanGameOverHTTP(t *testing.T) {
 
 	// The UI learns from /api/config that human mode is on.
 	var cfg struct {
-		Live struct {
+		TraceURL string `json:"trace_url"`
+		Live     struct {
 			Info struct {
 				Model         string   `json:"model"`
 				Mock          bool     `json:"mock"`
@@ -168,6 +169,9 @@ func TestHumanGameOverHTTP(t *testing.T) {
 	s.get(t, "/api/config", &cfg)
 	if !cfg.Live.Info.Mock || cfg.Live.Info.MoveTimeoutMS != 5000 || cfg.Live.TraceDelayMS != 20000 || len(cfg.Live.Info.Script) != 2 {
 		t.Errorf("config = %+v", cfg)
+	}
+	if cfg.TraceURL != ExploreTraceURL("http://grafana") {
+		t.Errorf("trace_url = %q, want the Grafana Explore link", cfg.TraceURL)
 	}
 
 	code, out := s.post(t, "/api/live/new", map[string]any{"human_color": "white"}, nil)
