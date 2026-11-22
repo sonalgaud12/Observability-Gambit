@@ -34,6 +34,7 @@
   .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
   .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
+  .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
   .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
   .controls .ply { color: var(--muted); margin-left: auto; font-variant-numeric: tabular-nums; }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; overflow-wrap: anywhere; }
@@ -165,6 +166,7 @@ function renderBoard() {
       if (bestSq.includes(sq)) cls.push("best");
       let inner = "";
       if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
+      if (vr === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
       if (c !== ".") {
         const white = c === c.toUpperCase();
         inner += `<span class="pc ${white ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
