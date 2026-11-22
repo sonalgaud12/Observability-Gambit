@@ -115,9 +115,3 @@ func Setup(ctx context.Context, extra ...attribute.KeyValue) (func(context.Conte
 		return errors.Join(errs...)
 	}, nil
 }
-
-// CaptureContent reports whether prompt/completion content should be recorded
-// on spans. Off by default, matching the GenAI instrumentation convention.
-func CaptureContent() bool {
-	return strings.EqualFold(os.Getenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT"), "true")
-}

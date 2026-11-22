@@ -20,7 +20,7 @@ STOCKFISH  ?= stockfish
 GAME       ?=
 LIVE_ARGS  ?=
 
-export OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT ?= true
+export OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT ?= SPAN_AND_EVENT
 export STOCKFISH_PATH ?= $(STOCKFISH)
 
 .PHONY: build test up up-cloud up-prod down logs rehearse play analyze serve live live-mock replay sql clean

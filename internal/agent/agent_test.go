@@ -85,7 +85,7 @@ func TestOpenAICompatibleLoop(t *testing.T) {
 	rec := tracetest.NewSpanRecorder()
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
 	otel.SetTracerProvider(tp)
-	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", "SPAN_AND_EVENT")
 
 	client := llm.Instrument(llm.NewOpenAICompatible(srv.URL+"/v1", "k", "openai"))
 	ag := New(Config{Model: "m", Temperature: 0, MaxRetries: 2, Tools: true}, client, 1)

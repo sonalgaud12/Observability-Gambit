@@ -312,6 +312,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	inCheck := lastMoveChecks(g)
 	material := materialBalance(before, before.Turn())
 
+	ctx = telemetry.WithConversationID(ctx, gameID)
 	ctx, root := p.tracer.Start(ctx, "chess.move", trace.WithAttributes(
 		sc.GenAIConversationID.String(gameID),
 		sc.ChessGameID.String(gameID),

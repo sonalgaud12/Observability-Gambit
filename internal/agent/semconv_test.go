@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/sonalgaud12/observability-gambit/internal/llm"
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 	"github.com/sonalgaud12/observability-gambit/internal/telemetry/telemetrytest"
 )
 
@@ -37,15 +38,12 @@ func toolThenMove(tool string) *scripted {
 }
 
 func TestToolSpanFollowsTheConventions(t *testing.T) {
-	for _, capture := range []bool{false, true} {
+	for _, mode := range []string{"NO_CONTENT", "SPAN_ONLY", "EVENT_ONLY", "SPAN_AND_EVENT"} {
+		capture := mode == "SPAN_ONLY" || mode == "SPAN_AND_EVENT" // content on the span
 		rec := telemetrytest.Install(t)
-		if capture {
-			t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
-		} else {
-			t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false")
-		}
+		t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", mode)
 		ag := New(Config{Model: "m", Tools: true}, llm.Instrument(toolThenMove("threats")), 1)
-		_, st, err := ag.Choose(context.Background(), chess.NewGame())
+		_, st, err := ag.Choose(telemetry.WithConversationID(context.Background(), "game-7"), chess.NewGame())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,6 +61,7 @@ func TestToolSpanFollowsTheConventions(t *testing.T) {
 			"gen_ai.tool.name":        "threats",
 			"gen_ai.tool.type":        "function",
 			"gen_ai.tool.call.id":     "c1",
+			"gen_ai.conversation.id":  "game-7",
 			"gen_ai.agent.name":       Name,
 			"gen_ai.tool.description": toolDescription("threats"),
 		} {
@@ -137,7 +136,10 @@ func TestAgentSpanAttributes(t *testing.T) {
 	for _, kv := range ag.SpanAttrs() {
 		got[string(kv.Key)] = kv.Value.AsInterface()
 	}
-	if got["gen_ai.agent.version"] != Version || got["gen_ai.agent.description"] != Description ||
+	if _, ok := got["gen_ai.agent.version"]; ok {
+		t.Errorf("gen_ai.agent.version was removed from invoke_agent in v0.1.0: %v", got)
+	}
+	if got["gambit.agent.version"] != Version || got["gen_ai.agent.description"] != Description ||
 		got["gen_ai.request.temperature"] != 0.3 || got["gen_ai.request.max_tokens"] != int64(512) {
 		t.Errorf("SpanAttrs = %v", got)
 	}

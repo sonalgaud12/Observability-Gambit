@@ -30,7 +30,8 @@ const Name = "chess-agent"
 // Description is the gen_ai.agent.description value.
 const Description = "Plays one side of a chess game: reads the position, may call the legal_moves and threats tools, and answers with one move in SAN."
 
-// Version is the gen_ai.agent.version value: the demo's release.
+// Version is the agent's release, recorded as gambit.agent.version.
+// gen_ai.agent.version was removed from the invoke_agent span in v0.1.0.
 const Version = telemetry.Version
 
 // Config controls how the agent plays.
@@ -217,7 +218,10 @@ func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, pos *chess.Positio
 	if d := toolDescription(tc.Name); d != "" {
 		attrs = append(attrs, sc.GenAIToolDescription.String(d))
 	}
-	capture := telemetry.CaptureContent()
+	if id := telemetry.ConversationID(ctx); id != "" {
+		attrs = append(attrs, sc.GenAIConversationID.String(id))
+	}
+	capture := telemetry.Capture().OnSpans()
 	if capture {
 		attrs = append(attrs, sc.GenAIToolCallArguments.String(tc.Arguments))
 	}
@@ -360,7 +364,7 @@ func (s Stats) Attrs() []attribute.KeyValue {
 // starts: who the agent is and how it calls the model.
 func (a *Agent) SpanAttrs() []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
-		sc.GenAIAgentVersion.String(Version),
+		sc.GambitAgentVersion.String(Version),
 		sc.GenAIAgentDescription.String(Description),
 	}
 	if a.cfg.Temperature >= 0 {

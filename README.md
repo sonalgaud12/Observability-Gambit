@@ -119,8 +119,11 @@ It does three things on the Cloud copy only:
   `gen_ai.system_instructions` to `gambit.prompt.input` / `gambit.prompt.output`
   / `gambit.prompt.system`. Grafana Cloud intentionally strips the original
   attributes from stored spans (open-source Tempo keeps them), so this keeps the
-  prompts queryable. With content capture on, the same content also arrives in
-  Loki as the `gen_ai.client.inference.operation.details` event.
+  prompts queryable. With content going to events (`EVENT_ONLY` or
+  `SPAN_AND_EVENT`), the same content is also sent as the
+  `gen_ai.client.inference.operation.details` log event, which is expected to
+  show up in Loki. That path has not been tested against a real Grafana Cloud
+  stack yet, so treat it as expected behaviour rather than something verified.
 - Sets `agento11y.record=true`, so conversations also show up in Grafana Cloud
   Agent Observability.
 - Adds `gambit.run` and `gambit.model` resource attributes (from `GAMBIT_RUN`
@@ -349,7 +352,7 @@ in plain words, in addition to the grade and the rule-based reason above.
   (`gen_ai.agent.name=coach`, `gambit.coach.kind` = `comment` or `why`,
   `gambit.coach.subject` = `human` or `agent`) and its `chat {model}` span. The
   player's spans keep `chess-agent`. Prompt and answer are captured on the chat
-  span under the same `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`
+  span under the same `OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT`
   switch. Coach calls are not in the dataset, so `gambit analyze` never sees them.
   The dashboards' decision-latency panels select `invoke_agent chess-agent`.
 
@@ -447,8 +450,12 @@ sql/correlation.sql      the label ⨝ trace join in pure SQL
 Standard OTel environment variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT`
 (default `http://localhost:4317`), `OTEL_SERVICE_NAME` (default `chess-agent`),
 `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`, and
-`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` for prompt/completion
-capture (the Makefile turns it on).
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` for prompt/completion capture. It
+takes the values the GenAI conventions define: `NO_CONTENT` (the default),
+`SPAN_ONLY`, `EVENT_ONLY` or `SPAN_AND_EVENT`. The Makefile and the Compose
+files default to `SPAN_AND_EVENT`. The older
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` is still read when the
+new variable is not set, and means `SPAN_AND_EVENT`.
 
 Traces, metrics and logs all go to the same OTLP endpoint. To send traces only
 (for a Collector without metrics or logs pipelines), set

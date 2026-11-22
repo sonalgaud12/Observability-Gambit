@@ -59,7 +59,6 @@ const (
 	ServerPort                      = attribute.Key("server.port")
 
 	// spans.yaml, gen_ai.invoke_agent.internal.
-	GenAIAgentVersion     = attribute.Key("gen_ai.agent.version")
 	GenAIAgentDescription = attribute.Key("gen_ai.agent.description")
 
 	// spans.yaml, gen_ai.execute_tool.
@@ -128,6 +127,9 @@ const (
 	// span attribute, so they stay on the invoke_agent span under our names.
 	GambitChatCalls = attribute.Key("gambit.chat_calls")
 	GambitToolCalls = attribute.Key("gambit.tool_calls")
+	// The agent's release. gen_ai.agent.version was removed from the
+	// invoke_agent span in v0.1.0, so it lives under our own key.
+	GambitAgentVersion = attribute.Key("gambit.agent.version")
 	// Retry bookkeeping for an agent that must produce a *valid* action.
 	GambitRetryAttempt = attribute.Key("gambit.retry.attempt")
 	// Marks traces produced by the offline mock model, so they can never be

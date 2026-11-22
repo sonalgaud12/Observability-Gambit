@@ -121,6 +121,10 @@ func (g *GenAI) InferenceDone(ctx context.Context, base []attribute.KeyValue, er
 	add(g.usageReasoning, u.Reasoning, metric.WithAttributes(base...)) // no modality on this one
 }
 
+// NoToolCalls is the toolCalls argument of AgentDone for an agent that cannot
+// call tools: gen_ai.invoke_agent.tool_calls is then not reported at all.
+const NoToolCalls = -1
+
 // AgentDone records the metrics for one in-process agent invocation.
 func (g *GenAI) AgentDone(ctx context.Context, agentName, model, errType string, d time.Duration, inferenceCalls, toolCalls int) {
 	durAttrs := []attribute.KeyValue{
@@ -140,7 +144,11 @@ func (g *GenAI) AgentDone(ctx context.Context, agentName, model, errType string,
 		sc.GenAIAgentName.String(agentName),
 	)
 	g.agentInferenceCalls.Record(ctx, int64(inferenceCalls), calls)
-	g.agentToolCalls.Record(ctx, int64(toolCalls), calls)
+	// The conventions say not to report the tool call count for agents that
+	// cannot call tools.
+	if toolCalls != NoToolCalls {
+		g.agentToolCalls.Record(ctx, int64(toolCalls), calls)
+	}
 }
 
 // ToolDone records gen_ai.execute_tool.duration for one tool execution.
@@ -164,17 +172,32 @@ func (g *GenAI) ToolDone(ctx context.Context, toolName, toolType, agentName, err
 // Event emits a GenAI event: a log record with an event name. The record
 // takes its trace and span IDs from ctx, so pass a context that carries the
 // span the event belongs to (it may have ended already; see
-// trace.ContextWithSpanContext).
+// trace.ContextWithSpanContext). A conversation id set with
+// WithConversationID is added as gen_ai.conversation.id.
 func (g *GenAI) Event(ctx context.Context, name string, sev log.Severity, attrs ...attribute.KeyValue) {
+	g.EventStructured(ctx, name, sev, attrs, nil)
+}
+
+// EventStructured is Event with extra attributes that carry structured values
+// (maps and slices), such as gen_ai.input.messages.
+func (g *GenAI) EventStructured(ctx context.Context, name string, sev log.Severity, attrs []attribute.KeyValue, structured []log.KeyValue) {
 	var r log.Record
 	r.SetEventName(name)
 	r.SetTimestamp(time.Now())
 	r.SetSeverity(sev)
 	r.SetSeverityText(sev.String())
-	kvs := make([]log.KeyValue, 0, len(attrs))
+	kvs := make([]log.KeyValue, 0, len(attrs)+len(structured)+1)
+	hasConv := false
 	for _, a := range attrs {
+		if a.Key == sc.GenAIConversationID {
+			hasConv = true
+		}
 		kvs = append(kvs, log.KeyValueFromAttribute(a))
 	}
+	if id := ConversationID(ctx); id != "" && !hasConv {
+		kvs = append(kvs, log.String(string(sc.GenAIConversationID), id))
+	}
+	kvs = append(kvs, structured...)
 	r.AddAttributes(kvs...)
 	g.logger.Emit(ctx, r)
 }

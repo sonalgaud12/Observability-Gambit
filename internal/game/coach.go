@@ -333,6 +333,7 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 	if f.human {
 		subject = "human"
 	}
+	ctx = telemetry.WithConversationID(ctx, s.ID)
 	ctx, root := p.tracer.Start(ctx, "chess.coach", trace.WithAttributes(
 		sc.GenAIConversationID.String(s.ID),
 		sc.ChessGameID.String(s.ID),
@@ -356,7 +357,7 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 		sc.GenAIOperationName.String(sc.OpInvokeAgent),
 		sc.GenAIAgentName.String(CoachAgentName),
 		sc.GenAIAgentDescription.String(CoachAgentDescription),
-		sc.GenAIAgentVersion.String(telemetry.Version),
+		sc.GambitAgentVersion.String(telemetry.Version),
 		sc.GenAIProviderName.String(provider),
 		sc.GenAIRequestModel.String(c.model),
 		sc.GenAIRequestMaxTokens.Int(coachMaxTokens),
@@ -371,7 +372,8 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 	start := time.Now()
 	errType, chatCalls := "", 0
 	defer func() {
-		p.genai.AgentDone(actx, CoachAgentName, c.model, errType, time.Since(start), chatCalls, 0)
+		// The coach cannot call tools, so it reports no tool call count.
+		p.genai.AgentDone(actx, CoachAgentName, c.model, errType, time.Since(start), chatCalls, telemetry.NoToolCalls)
 		span.End()
 	}()
 	if s.player != "" {

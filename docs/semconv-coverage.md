@@ -6,8 +6,14 @@ semantic-conventions repo, whose `docs/gen-ai/` pages now only point to the new
 repo. Everything below is **development** stability.
 
 All keys are defined once, in [`internal/semconv/attrs.go`](../internal/semconv/attrs.go).
-"Opt-in" means it is only recorded with
-`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true`.
+"Opt-in" means it is only recorded when
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT` asks for it: `NO_CONTENT` (the
+default), `SPAN_ONLY`, `EVENT_ONLY` or `SPAN_AND_EVENT`. Opt-in span attributes
+need `SPAN_ONLY` or `SPAN_AND_EVENT`; the opt-in content on the details event
+needs `EVENT_ONLY` or `SPAN_AND_EVENT`. The older
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` is still read when the
+new variable is unset, and means `SPAN_AND_EVENT`. An unknown value means
+`NO_CONTENT`.
 
 ## Spans
 
@@ -16,6 +22,7 @@ All keys are defined once, in [`internal/semconv/attrs.go`](../internal/semconv/
 | Key | When | Notes |
 |---|---|---|
 | `gen_ai.operation.name` | always | `chat` |
+| `gen_ai.conversation.id` | when the caller has one | the game id, carried in the context (`telemetry.WithConversationID`); also on the tool spans and every GenAI event, never on metrics |
 | `gen_ai.provider.name` | always | `openai`, `ollama`, `mock`, ... |
 | `gen_ai.request.model` | always | |
 | `server.address`, `server.port` | remote clients | from the client's base URL; port defaults to 443/80 |
@@ -35,7 +42,7 @@ All keys are defined once, in [`internal/semconv/attrs.go`](../internal/semconv/
 | `error.type` | on failure | HTTP status, `timeout`, or `_OTHER` |
 | `gen_ai.system_instructions` | opt-in | the leading system message(s), as `[{"type":"text","content":...}]` (see "Judgment calls") |
 | `gen_ai.input.messages` | opt-in | the rest of the chat, in the parts format |
-| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning`) |
+| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning`). Messages carry no `finish_reason` (deprecated in v0.1.0; it is in `gen_ai.response.finish_reasons`) |
 | `gen_ai.tool.definitions` | opt-in | `[{"type":"function","name":...,"description":...,"parameters":...}]` |
 
 Not emitted, on purpose:
@@ -49,7 +56,7 @@ Not emitted, on purpose:
 | Key | Notes |
 |---|---|
 | `gen_ai.operation.name`, `gen_ai.agent.name`, `gen_ai.provider.name`, `gen_ai.request.model`, `gen_ai.conversation.id` | as before |
-| `gen_ai.agent.version` | the demo's release (`telemetry.Version`) |
+| `gambit.agent.version` | the demo's release (`telemetry.Version`). `gen_ai.agent.version` was removed from this span in v0.1.0, so it lives under our own key (the release is also `service.version` on the resource) |
 | `gen_ai.agent.description` | |
 | `gen_ai.request.temperature`, `gen_ai.request.max_tokens` | the agent's configured settings |
 | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | totals across every model call in the decision |
@@ -64,6 +71,7 @@ Not emitted, on purpose:
 | `gen_ai.tool.call.id` | only when the model supplied one |
 | `gen_ai.tool.description` | the description the model was given |
 | `gen_ai.agent.name` | |
+| `gen_ai.conversation.id` | the game id, when the caller has one |
 | `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` | opt-in |
 | `error.type` | `unknown_tool` |
 
@@ -80,7 +88,7 @@ conversation id, no content.
 | `gen_ai.client.inference.usage.cache_read.input_tokens` / `.cache_write.input_tokens` | counter, {token} | | + `gen_ai.token.modality=text` |
 | `gen_ai.client.inference.usage.reasoning.output_tokens` | counter, {token} | | no modality (the spec has none on this one) |
 | `gen_ai.invoke_agent.duration` | histogram, s | 0.1 … 86400 | operation, agent name, request model, `error.type` |
-| `gen_ai.invoke_agent.inference_calls` / `.tool_calls` | histogram | 1 … 128 | operation, agent name |
+| `gen_ai.invoke_agent.inference_calls` / `.tool_calls` | histogram | 1 … 128 | operation, agent name. The coach cannot call tools, so it reports no `tool_calls` |
 | `gen_ai.execute_tool.duration` | histogram, s | 0.01 … 81.92 | operation, tool name/type, agent name, `error.type` |
 
 Not emitted, on purpose:
@@ -97,13 +105,33 @@ Not emitted, on purpose:
 | Event | Severity | Correlated with | Attributes |
 |---|---|---|---|
 | `gen_ai.evaluation.result` | INFO | the (ended) `invoke_agent` span | `gen_ai.evaluation.name=stockfish_move_quality`, `.score.value` = winning-chance drop (0 = best), `.score.label` = best/good/inaccuracy/mistake/blunder, `.explanation`, `gen_ai.response.id` (not on fallback moves), plus `chess.game.id`, `chess.ply`, `chess.fallback` |
-| `gen_ai.client.inference.operation.details` | DEBUG | the chat span | request, response and content attributes. Only with content capture on |
+| `gen_ai.client.inference.operation.details` | DEBUG | the chat span | request, response and content attributes, with `gen_ai.conversation.id`. Only when content goes to events (`EVENT_ONLY`, `SPAN_AND_EVENT`) |
 | `gen_ai.client.inference.exception` | WARN | the chat span | `exception.type` (Go type), `exception.message` |
 | `gen_ai.invoke_agent.exception` | WARN | the `invoke_agent` span | same |
 | `gen_ai.execute_tool.exception` | WARN | the tool span | same |
 
 `gen_ai.client.invoke_agent.exception` is for agents behind a remote service.
 This agent runs in-process, so it uses `gen_ai.invoke_agent.exception`.
+
+Every event carries `gen_ai.conversation.id` (the game id) when one is known.
+
+## Structured values
+
+v0.1.0 wants `gen_ai.input.messages`, `gen_ai.output.messages`,
+`gen_ai.system_instructions`, `gen_ai.tool.definitions` and the tool call
+arguments and result as structured values, not JSON strings.
+
+- **On events: structured.** Log record attributes can hold maps and lists
+  (`go.opentelemetry.io/otel/log` v0.11.0), so the details event carries the
+  messages, system instructions and tool definitions as lists of maps.
+- **On spans: still JSON strings, because the SDK cannot do otherwise.** The Go
+  OpenTelemetry SDK in `go.mod` (v1.35.0) has span attribute types for bool,
+  int64, float64, string and slices of those only: there is no map or nested
+  list value. Until `go.opentelemetry.io/otel/attribute` gains one, span
+  attributes keep the JSON text. The Collector copies on the Cloud path
+  (`gambit.prompt.*`) are strings for the same reason.
+- **Tool call arguments and result** exist only as span attributes (there is no
+  tool event), so they stay strings as well.
 
 ## Judgment calls
 
