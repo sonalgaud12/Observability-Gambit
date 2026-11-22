@@ -47,8 +47,12 @@ func (c *OpenAICompatible) Provider() string { return c.ProviderName }
 
 // Endpoint implements Endpoint: the host and port of BaseURL, with the
 // scheme's default port when none is given.
-func (c *OpenAICompatible) Endpoint() (string, int) {
-	u, err := url.Parse(c.BaseURL)
+func (c *OpenAICompatible) Endpoint() (string, int) { return endpointOf(c.BaseURL) }
+
+// endpointOf is the host and port of a base URL, with the scheme's default
+// port when none is given.
+func endpointOf(baseURL string) (string, int) {
+	u, err := url.Parse(baseURL)
 	if err != nil || u.Hostname() == "" {
 		return "", 0
 	}

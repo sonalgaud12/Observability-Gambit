@@ -22,6 +22,10 @@ type preset struct {
 	Temperature float64
 	MaxTokens   int
 
+	// Effort is the reasoning effort sent to the model: output_config.effort
+	// for the native Anthropic client ("" = the model's default).
+	Effort string
+
 	// OpenAI GPT-6 models: Chat Completions allows function calling only with
 	// reasoning_effort "none", and the output cap is max_completion_tokens.
 	ReasoningEffort     string
@@ -29,14 +33,16 @@ type preset struct {
 }
 
 // presets verified against the providers' documentation on 2026-11-17:
-//   - claude-haiku-5-5 over Anthropic's OpenAI-compatible endpoint, with the
-//     flags the pilots used (--temperature -1 --max-tokens 4096).
+//   - claude-haiku-5-5 over Anthropic's native Messages API, so the thinking
+//     summary and thinking-token count reach the trace (the OpenAI-compatible
+//     endpoint returns neither). Temperature is left to the provider (Claude 5
+//     models reject other values) and the output cap leaves room for thinking.
 //   - gpt-6-luna: developers.openai.com/api/docs/models/gpt-6-luna lists the
 //     single id gpt-6-luna; its Chat Completions function calling needs
 //     reasoning_effort "none" (the model's default is "medium").
 var presets = map[string]preset{
 	"haiku-5.5": {
-		Label: "Claude Haiku 5.5", Provider: "anthropic", BaseURL: "https://api.anthropic.com/v1",
+		Label: "Claude Haiku 5.5", Provider: "anthropic", BaseURL: "https://api.anthropic.com",
 		Model: "claude-haiku-5-5", KeyEnv: "ANTHROPIC_API_KEY", Temperature: -1, MaxTokens: 4096,
 	},
 	"luna-6": {
@@ -98,8 +104,18 @@ func (m *modelFlags) modelChoices(ids []string) ([]game.ModelChoice, error) {
 					mm.Brain = brain
 					return llm.Instrument(mm)
 				}
+				if p.Provider == "anthropic" {
+					effort := p.Effort
+					if *m.effort != "" { // --effort tunes the Claude options; GPT-6 Luna must stay at "none"
+						effort = *m.effort
+					}
+					return llm.Instrument(newClient(p.Provider, p.BaseURL, key, effort, *m.llmTimeout))
+				}
 				c := llm.NewOpenAICompatible(p.BaseURL, key, p.Provider)
 				c.ReasoningEffort, c.MaxCompletionTokens = p.ReasoningEffort, p.MaxCompletionTokens
+				if *m.llmTimeout > 0 {
+					c.HTTP.Timeout = *m.llmTimeout
+				}
 				return llm.Instrument(c)
 			},
 		})

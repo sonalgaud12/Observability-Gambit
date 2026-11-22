@@ -23,26 +23,26 @@ new variable is unset, and means `SPAN_AND_EVENT`. An unknown value means
 |---|---|---|
 | `gen_ai.operation.name` | always | `chat` |
 | `gen_ai.conversation.id` | when the caller has one | the game id, carried in the context (`telemetry.WithConversationID`); also on the tool spans and every GenAI event, never on metrics |
-| `gen_ai.provider.name` | always | `openai`, `ollama`, `mock`, ... |
+| `gen_ai.provider.name` | always | `openai`, `anthropic`, `ollama`, `mock`, ... |
 | `gen_ai.request.model` | always | |
-| `server.address`, `server.port` | remote clients | from the client's base URL; port defaults to 443/80 |
+| `server.address`, `server.port` | remote clients | from the client's base URL; port defaults to 443/80 (`api.anthropic.com:443` for the Anthropic client) |
 | `gen_ai.request.temperature` | when sent | |
 | `gen_ai.request.max_tokens` | when sent | |
 | `gen_ai.request.top_p` | when sent | plumbed through `llm.Request`; the agent does not set it today |
 | `gen_ai.request.seed` | when sent | plumbed through; not set today |
 | `gen_ai.request.stop_sequences` | when sent | plumbed through; not set today |
-| `gen_ai.request.reasoning.level` | when sent | the request's level, or the client's default (set by the model presets in `cmd/gambit/models.go`, e.g. `none` for OpenAI GPT-6) |
+| `gen_ai.request.reasoning.level` | when sent | the request's level, or the client's default (set by the model presets in `cmd/gambit/models.go`, e.g. `none` for OpenAI GPT-6, or by `--effort`: for Anthropic it is `output_config.effort`) |
 | `gen_ai.output.type` | when the request asks for a format | `json` sends `response_format: json_object`; plain text requests leave it unset |
 | `gen_ai.prompt.name`, `gen_ai.prompt.version` | always (agent and coach) | `chess-move` / `chess-coach`; the version is a hash of the prompt, see below |
-| `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons` | on success | |
-| `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | on success | |
-| `gen_ai.usage.reasoning.output_tokens` | when reported and > 0 | replaces `gambit.usage.reasoning_tokens` |
-| `gen_ai.usage.cache_read.input_tokens` | when reported and > 0 | OpenAI `prompt_tokens_details.cached_tokens` |
-| `gen_ai.usage.cache_write.input_tokens` | when reported and > 0 | OpenAI does not report it; OpenRouter's `cache_write_tokens` does |
+| `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons` | on success | the provider's own value: OpenAI `stop`/`length`/`tool_calls`; Anthropic `end_turn`/`tool_use`/`max_tokens`/`stop_sequence`/`refusal` |
+| `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | on success | Anthropic's `input_tokens` leaves out cached tokens, so the client reports input + cache read + cache write, keeping the cache counts subsets of the input count |
+| `gen_ai.usage.reasoning.output_tokens` | when reported and > 0 | replaces `gambit.usage.reasoning_tokens`. OpenAI `completion_tokens_details.reasoning_tokens`; Anthropic `usage.output_tokens_details.thinking_tokens` (the raw reasoning, not the summary's length; absent from the response means unset here, never estimated) |
+| `gen_ai.usage.cache_read.input_tokens` | when reported and > 0 | OpenAI `prompt_tokens_details.cached_tokens`; Anthropic `cache_read_input_tokens` |
+| `gen_ai.usage.cache_write.input_tokens` | when reported and > 0 | OpenAI does not report it; OpenRouter's `cache_write_tokens` and Anthropic's `cache_creation_input_tokens` do |
 | `error.type` | on failure | HTTP status, `timeout`, or `_OTHER` |
 | `gen_ai.system_instructions` | opt-in | the leading system message(s), as `[{"type":"text","content":...}]` (see "Judgment calls") |
 | `gen_ai.input.messages` | opt-in | the rest of the chat, in the parts format |
-| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning`). Messages carry no `finish_reason` (deprecated in v0.1.0; it is in `gen_ai.response.finish_reasons`) |
+| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning` on Chat Completions; the summarized `thinking` blocks of the Anthropic Messages API). Messages carry no `finish_reason` (deprecated in v0.1.0; it is in `gen_ai.response.finish_reasons`) |
 | `gen_ai.tool.definitions` | opt-in | `[{"type":"function","name":...,"description":...,"parameters":...}]` |
 
 Not emitted, on purpose:
@@ -135,6 +135,31 @@ arguments and result as structured values, not JSON strings.
 
 ## Judgment calls
 
+- **Anthropic: system prompt and thinking blocks.** The Messages API takes the
+  system prompt separately from the chat (`system`), so for Claude
+  `gen_ai.system_instructions` is exactly what the spec describes. The model's
+  reasoning is a *summary* (`thinking.display: "summarized"`; the raw chain of
+  thought is never returned), recorded as a `reasoning` part. Its length is not
+  `gen_ai.usage.reasoning.output_tokens`, which counts the raw thinking tokens
+  the API bills. With `display: "omitted"` (the API's default on Claude 5 models,
+  and not what this client asks for) the part would be empty and so is not
+  emitted, but the token count still is. Thinking blocks and their signatures
+  are kept verbatim on the message and sent back unchanged; they are not part of
+  the telemetry's `gen_ai.input.messages` beyond the same `reasoning` part.
+- **Anthropic: finish reasons are not mapped.** We record `end_turn`,
+  `tool_use`, `max_tokens`, `stop_sequence` and `refusal` as the API sends
+  them rather than translating them to OpenAI's `stop`/`tool_calls`/`length`:
+  the attribute says what the provider said. The agent's `finish_length` feature
+  treats both `length` and `max_tokens` as a truncated answer. A `refusal`
+  (HTTP 200) is not an error, so there is no `error.type`; it shows as
+  `finish_reasons=["refusal"]` and an unreadable move.
+- **Anthropic: no new spans, no `gen_ai.request.seed`/`output.type`.** The call
+  is the same `chat {model}` span through the same wrapper. The Messages API
+  has no seed or JSON mode, so those request settings, which the agent does not
+  set, are not sent and would not be recorded as sent.
+- **`gen_ai.provider.name` is `anthropic`** for the native client and for the
+  old OpenAI-compatible route alike, so dashboards keyed on it keep working;
+  what changes is that the reasoning attributes are now filled.
 - **System instructions on Chat Completions.** The spec uses
   `gen_ai.system_instructions` when the API takes instructions *separately*
   from the chat history; Chat Completions sends them as a `system` message

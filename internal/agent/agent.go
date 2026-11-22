@@ -124,7 +124,7 @@ func (a *Agent) Choose(ctx context.Context, g *chess.Game) (*chess.Move, Stats, 
 		}
 		st.Reasoning = resp.Message.Content
 		st.ResponseID, st.FinishReason = resp.ID, resp.FinishReason
-		if resp.FinishReason == "length" {
+		if resp.FinishReason == "length" || resp.FinishReason == "max_tokens" { // OpenAI-style, Anthropic
 			st.FinishLength = true
 		}
 

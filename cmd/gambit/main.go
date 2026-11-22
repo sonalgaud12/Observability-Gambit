@@ -96,6 +96,9 @@ type modelFlags struct {
 	seed          *int64
 	mockBrain     *int
 	keepReasoning *bool
+	effort        *string
+	llmTimeout    *time.Duration
+	tempSet       bool
 }
 
 // registerModelFlags adds the shared flags to fs. modelFlag is the name of the
@@ -104,8 +107,8 @@ type modelFlags struct {
 func registerModelFlags(fs *flag.FlagSet, modelFlag string) *modelFlags {
 	return &modelFlags{
 		mock:          fs.Bool("mock", false, "use the offline mock model (rehearsal only: its correlations are synthetic)"),
-		baseURL:       fs.String("base-url", envOr("GAMBIT_BASE_URL", "https://api.openai.com/v1"), "OpenAI-compatible API base URL (Ollama: http://localhost:11434/v1)"),
-		provider:      fs.String("provider", envOr("GAMBIT_PROVIDER", "openai"), "gen_ai.provider.name for spans"),
+		baseURL:       fs.String("base-url", envOr("GAMBIT_BASE_URL", ""), "API base URL (default: https://api.openai.com/v1, or https://api.anthropic.com for --provider anthropic; Ollama: http://localhost:11434/v1)"),
+		provider:      fs.String("provider", envOr("GAMBIT_PROVIDER", "openai"), "gen_ai.provider.name for spans; \"anthropic\" also selects the native Anthropic Messages API (shows Claude's thinking summary) instead of the OpenAI-compatible client"),
 		model:         fs.String(modelFlag, envOr("GAMBIT_MODEL", "gpt-4o-mini"), "model name"),
 		temperature:   fs.Float64("temperature", 0.7, "sampling temperature (negative = provider default)"),
 		maxTokens:     fs.Int("max-tokens", 1024, "max output tokens per call"),
@@ -118,15 +121,70 @@ func registerModelFlags(fs *flag.FlagSet, modelFlag string) *modelFlags {
 		seed:          fs.Int64("seed", time.Now().UnixNano(), "random seed"),
 		mockBrain:     fs.Int("mock-brain-skill", 6, "mock only: Stockfish Skill Level (0-20) the mock follows while calm; -1 = none"),
 		keepReasoning: fs.Bool("keep-reasoning", true, "store the model's final answer text in the dataset (shown in the UI)"),
+		effort:        fs.String("effort", envOr("GAMBIT_EFFORT", ""), "reasoning effort: low, medium, high, xhigh or max (anthropic: output_config.effort; \"\" = the model's default, medium on Claude Haiku 5.5)"),
+		llmTimeout:    fs.Duration("llm-timeout", 0, "HTTP timeout for one model call, thinking included (0 = 10m for --provider anthropic, 3m otherwise)"),
 	}
 }
 
-func (m *modelFlags) apiKey() string { return envOr("GAMBIT_API_KEY", os.Getenv("OPENAI_API_KEY")) }
+// finish applies defaults that depend on which flags the user actually set.
+// Call it after fs.Parse.
+func (m *modelFlags) finish(fs *flag.FlagSet) {
+	set := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "temperature" {
+			set = true
+		}
+	})
+	// Claude 5 models reject a non-default temperature, so the 0.7 default is
+	// wrong for them: leave it to the provider unless the user chose one.
+	if !set && m.native() {
+		*m.temperature = -1
+	}
+}
+
+// native reports whether the model is called through Anthropic's native
+// Messages API rather than an OpenAI-compatible endpoint.
+func (m *modelFlags) native() bool { return !*m.mock && *m.provider == "anthropic" }
+
+// newClient builds the (uninstrumented) client for the chosen provider.
+func newClient(provider, baseURL, apiKey, effort string, timeout time.Duration) llm.Client {
+	if provider == "anthropic" {
+		c := llm.NewAnthropic(baseURL, apiKey)
+		c.Effort = effort
+		if timeout > 0 {
+			c.SetTimeout(timeout)
+		}
+		return c
+	}
+	if baseURL == "" {
+		baseURL = "https://api.openai.com/v1"
+	}
+	c := llm.NewOpenAICompatible(baseURL, apiKey, provider)
+	c.ReasoningEffort = effort
+	if timeout > 0 {
+		c.HTTP.Timeout = timeout
+	}
+	return c
+}
+
+func (m *modelFlags) apiKey() string {
+	if *m.provider == "anthropic" { // never send an OpenAI key to Anthropic
+		return envOr("GAMBIT_API_KEY", os.Getenv("ANTHROPIC_API_KEY"))
+	}
+	return envOr("GAMBIT_API_KEY", os.Getenv("OPENAI_API_KEY"))
+}
 
 // check fails early when a real model is selected without a way to call it.
 func (m *modelFlags) check() error {
+	if m.native() && strings.Contains(*m.baseURL, "api.openai.com") {
+		return fmt.Errorf("--provider anthropic with --base-url %s: that is OpenAI's API, and it would be sent the Anthropic key", *m.baseURL)
+	}
 	if !*m.mock && m.apiKey() == "" && !strings.Contains(*m.baseURL, "localhost") && !strings.Contains(*m.baseURL, "127.0.0.1") {
-		return fmt.Errorf("no API key: set OPENAI_API_KEY or GAMBIT_API_KEY, use a local --base-url, or pass --mock")
+		keyEnv := "OPENAI_API_KEY"
+		if *m.provider == "anthropic" {
+			keyEnv = "ANTHROPIC_API_KEY"
+		}
+		return fmt.Errorf("no API key: set %s or GAMBIT_API_KEY, use a local --base-url, or pass --mock", keyEnv)
 	}
 	return nil
 }
@@ -168,7 +226,7 @@ func (m *modelFlags) gameConfig(w *dataset.Writer) game.Config {
 				mm.Brain = brain
 				return llm.Instrument(mm)
 			}
-			return llm.Instrument(llm.NewOpenAICompatible(*m.baseURL, apiKey, providerName))
+			return llm.Instrument(newClient(providerName, *m.baseURL, apiKey, *m.effort, *m.llmTimeout))
 		},
 		StockfishPath:  *m.stockfish,
 		MockBrainSkill: -1,
@@ -205,6 +263,7 @@ func play(args []string) error {
 	moveMS := fs.Int("opponent-movetime", 100, "opponent think time per move, ms")
 	out := fs.String("out", "data", "dataset directory (appends)")
 	fs.Parse(args)
+	m.finish(fs)
 
 	if err := m.check(); err != nil {
 		return err
@@ -282,6 +341,7 @@ func serve(args []string) error {
 	tokenBudget := fs.Int("game-token-budget", 0, "live: end a game once the agent has used this many input+output tokens (0 = no limit)")
 	noCoach := fs.Bool("no-coach", false, "live: turn the chess coach off (by default a model call comments on each of the human's moves, and any move can be explained on request; it uses the game's model and has its own token allowance of half --game-token-budget)")
 	fs.Parse(args)
+	m.finish(fs)
 
 	opts := web.Options{Addr: *addr, DataDir: *data, ModelPath: *model, TraceURL: *traceURL}
 	if !*live {
