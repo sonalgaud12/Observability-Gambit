@@ -48,6 +48,7 @@
   .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
   .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
+  .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
   #board.locked .sq { cursor: default; }
   #promo { position: absolute; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center; gap: 10px; background: #0b122088; }
   #promo[hidden] { display: none; }
@@ -402,6 +403,7 @@ function renderBoard() {
       if (S.myTurn && isMine(c) && S.legal[sq]) cls.push("mine", "can");
       let inner = "";
       if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
+      if (vr === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
       if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
       const label = c === "." ? sq : `${c === c.toUpperCase() ? "White" : "Black"} ${PIECE_NAME[c.toLowerCase()].toLowerCase()} on ${sq}`;
       html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" role="button" aria-label="${label}"${c === "." ? "" : ` title="${label}"`}>${inner}</div>`);
