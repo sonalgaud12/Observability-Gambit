@@ -142,6 +142,54 @@ func (m *modelFlags) finish(fs *flag.FlagSet) {
 	}
 }
 
+// moveTimeout resolves --move-timeout. "auto" is 15s for models that answer
+// directly, and longer for Claude, whose thinking counts against the same cap:
+// see autoMoveTimeout. ids are the --models presets offered, if any.
+func (m *modelFlags) moveTimeout(flagValue string, ids []string) (time.Duration, error) {
+	if flagValue != "auto" {
+		d, err := time.ParseDuration(flagValue)
+		if err != nil || d < 0 {
+			return 0, fmt.Errorf("--move-timeout %q: want a duration such as 20s, 0 for no cap, or auto", flagValue)
+		}
+		return d, nil
+	}
+	claude := m.native()
+	for _, id := range ids {
+		if presets[id].Provider == "anthropic" {
+			claude = true
+		}
+	}
+	if *m.mock || !claude {
+		return autoMoveTimeout(false, ""), nil
+	}
+	return autoMoveTimeout(true, *m.effort), nil
+}
+
+// autoMoveTimeout is the per-move cap: 15s for a model that answers directly,
+// and when a Claude model thinks, by effort ("" is the model's default, medium
+// on Claude Haiku 5.5). These are estimates
+// of how long a move with a few tool rounds and one illegal-move retry may
+// take, not measurements: raise them if moves time out, or lower --effort.
+// A longer cap means a hung model costs the player longer before the random
+// fallback move.
+func autoMoveTimeout(claude bool, effort string) time.Duration {
+	if !claude {
+		return 15 * time.Second
+	}
+	switch effort {
+	case "low":
+		return 20 * time.Second
+	case "high":
+		return 60 * time.Second
+	case "xhigh":
+		return 90 * time.Second
+	case "max":
+		return 120 * time.Second
+	default: // medium
+		return 30 * time.Second
+	}
+}
+
 // native reports whether the model is called through Anthropic's native
 // Messages API rather than an OpenAI-compatible endpoint.
 func (m *modelFlags) native() bool { return !*m.mock && *m.provider == "anthropic" }
@@ -324,7 +372,7 @@ func serve(args []string) error {
 	traceURL := fs.String("trace-url", envOr("GAMBIT_TRACE_URL", web.ExploreTraceURL("http://localhost:3000")),
 		"trace deep link; {trace_id} is replaced. Default: the trace in Grafana Explore on the Tempo datasource")
 	live := fs.Bool("live", false, "human mode: play the agent from the stage UI (needs Stockfish and a model; see the model flags)")
-	moveTimeout := fs.Duration("move-timeout", 15*time.Second, "live: hard cap on one agent move; on timeout a random legal move is played and flagged (0 = none)")
+	moveTimeoutFlag := fs.String("move-timeout", envOr("GAMBIT_MOVE_TIMEOUT", "auto"), "live: hard cap on one agent move; on timeout a random legal move is played and flagged. A duration (20s), 0 for no cap, or auto: 15s, or longer when Claude thinks (by --effort; see README)")
 	script := fs.String("script", "", "live: scripted opening, the human's moves separated by spaces or commas, e.g. \"e4 Nf3 Bc4\"")
 	traceDelay := fs.Duration("trace-delay", 5*time.Second, "live: wait this long after a move is graded before offering its trace link (the Collector batches spans for ~2s before Tempo gets them; 0 = offer it at once)")
 	// These only matter with --live. `serve --model` is the analysis bundle,
@@ -349,15 +397,20 @@ func serve(args []string) error {
 	}
 
 	var choices []game.ModelChoice
+	var ids []string
 	if *models != "" {
-		ids, err := parseModelList(*models)
-		if err != nil {
+		var err error
+		if ids, err = parseModelList(*models); err != nil {
 			return err
 		}
 		if choices, err = m.modelChoices(ids); err != nil {
 			return err
 		}
 	} else if err := m.check(); err != nil {
+		return err
+	}
+	moveTimeout, err := m.moveTimeout(*moveTimeoutFlag, ids)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -377,7 +430,7 @@ func serve(args []string) error {
 
 	lv, err := game.NewLive(game.LiveConfig{
 		Config:      m.gameConfig(w),
-		MoveTimeout: *moveTimeout,
+		MoveTimeout: moveTimeout,
 		Script:      strings.FieldsFunc(*script, func(r rune) bool { return r == ',' || r == ' ' }),
 		Models:      choices, DefaultModel: *defaultModel,
 		Exclusive: *exclusive, MaxGamesPerHour: *perHour, MaxGamesPerDay: *perDay,
@@ -392,7 +445,7 @@ func serve(args []string) error {
 	opts.Live, opts.TraceDelay, opts.Ctx = lv, *traceDelay, ctx
 	info := lv.Info()
 	log.Printf("human mode: %s/%s, move timeout %s, grader depth %d, recording to %s/",
-		info.Provider, info.Model, *moveTimeout, *m.depth, *data)
+		info.Provider, info.Model, moveTimeout, *m.depth, *data)
 	if len(info.Models) > 1 {
 		for _, mi := range info.Models {
 			log.Printf("  model option %s: %s/%s", mi.ID, mi.Provider, mi.Model)

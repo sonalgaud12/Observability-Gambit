@@ -131,8 +131,25 @@ request, across tool rounds and illegal-move retries.
 
 Thinking counts against `--max-tokens`: a cap sized for a short answer can be
 used up by thinking (`finish_reasons=max_tokens`, no text). Use 4096 or more,
-or a lower `--effort`. Thinking also takes time: for `serve --live`, check that
-`--move-timeout` (15s by default) is long enough.
+or a lower `--effort`.
+
+**Thinking and the stage clock.** Thinking counts against the same per-move cap as
+the answer, so `serve --live` sets `--move-timeout auto` by effort
+(see the `--move-timeout` row under human mode) instead of a flat 15s. The numbers are estimates, not measurements: play a game at
+the effort you will use on stage and adjust. The trade-off:
+
+- *Shorter cap, lower effort:* a snappier clock, but the cap can cut off a model
+  that is still thinking, and the move becomes a random fallback flagged
+  `timed_out`. That can be a good demo of a blunder, and a bad one of the model.
+- *Longer cap, higher effort:* better moves and richer reasoning in the trace, but
+  the human waits longer each move, and a model that hangs takes the whole cap to
+  be noticed. The live clock (amber, then red) is drawn against the cap, so a 60s
+  cap looks like a slow model, not a stuck one.
+- The local Collector's tail sampler waits `decision_wait` (15s) for a trace. A move
+  longer than that can reach Jaeger incomplete: raise `decision_wait` with the cap.
+  The Grafana Cloud collector (`collector/cloud.yaml`, used by the shared
+  deployment) has no tail sampling, so it is not affected.
+- The coach (one comment per human move) has its own fixed 25s cap per call.
 
 Nothing here calls the API in tests; they use canned Messages API responses.
 
@@ -268,7 +285,7 @@ model is `--agent-model` here because `--model` is the analysis bundle.
 | Flag | Default | What it does |
 |---|---|---|
 | `--live` | off | Turn human mode on. Without it, `serve` is the replay UI only. |
-| `--move-timeout` | 15s | Hard cap on one agent move, retries and tool calls included. `0` = no cap. |
+| `--move-timeout` | `auto` (15s) | Hard cap on one agent move, retries and tool calls included. A duration, `0` for no cap, or `auto`: 15s, or longer when Claude thinks (20s at `--effort low`, 30s at `medium` or the model's default, 60s `high`, 90s `xhigh`, 120s `max`). Also `GAMBIT_MOVE_TIMEOUT`. See "Claude and its reasoning". |
 | `--script` | none | Scripted opening: the human's moves, e.g. `"e4 Nf3 Bc4"`. Editable in the UI. |
 | `--trace-delay` | 5s | How long after a move is graded its "Open trace" link is offered (see below). |
 | `--grader-depth` | 14 | Same label as batch games. |

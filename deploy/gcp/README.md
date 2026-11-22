@@ -44,8 +44,12 @@ so the `luna-6` option sends `reasoning_effort: "none"` and `max_completion_toke
 documented replacement). The Haiku option calls Anthropic's native Messages API (`/v1/messages`) with adaptive thinking and
 summaries on, so Claude's reasoning and its thinking-token count reach the trace (the
 OpenAI-compatible endpoint returns neither). It leaves temperature to the provider and caps output at
-4096 tokens, which thinking counts against. Thinking adds seconds to a move: if moves time out
-(`--move-timeout 15s` in `docker-compose.prod.yaml`), raise it, or set `GAMBIT_EXTRA_ARGS='--effort low'`. Pricing is listed at $0.10 / $0.50 per million
+4096 tokens, which thinking counts against. Thinking adds seconds to a move, so the per-move cap is
+`--move-timeout ${GAMBIT_MOVE_TIMEOUT:-auto}` in `docker-compose.prod.yaml`: `auto` is 20s at
+`GAMBIT_EFFORT=low`, 30s at `medium` (the model's default, so also when `GAMBIT_EFFORT` is empty),
+60s at `high`, and 15s if no Claude model is offered. Set `GAMBIT_MOVE_TIMEOUT=45s` (or `0`) to
+choose yourself. The trade-off is in the README's "Claude and its reasoning". Those numbers are
+estimates: play a game on each effort before the talk and adjust. Pricing is listed at $0.10 / $0.50 per million
 input / output tokens for GPT-6 Luna. **Not verified without spending money:** a real call to
 either model. Do the two curl smoke tests below once before sharing the link.
 

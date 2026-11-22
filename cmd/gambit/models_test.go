@@ -147,3 +147,34 @@ func TestAnthropicKeyIsNotSentToOpenAI(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestMoveTimeoutFollowsClaudeEffort(t *testing.T) {
+	parse := func(args ...string) *modelFlags { return newFlags(t, args...) }
+	for _, tc := range []struct {
+		args []string
+		ids  []string
+		flag string
+		want time.Duration
+	}{
+		{nil, nil, "auto", 15 * time.Second},                                 // the default model answers directly
+		{[]string{"--provider", "anthropic"}, nil, "auto", 30 * time.Second}, // default effort is medium
+		{[]string{"--provider", "anthropic", "--effort", "low"}, nil, "auto", 20 * time.Second},
+		{[]string{"--provider", "anthropic", "--effort", "high"}, nil, "auto", 60 * time.Second},
+		{[]string{"--provider", "anthropic", "--effort", "max"}, nil, "auto", 120 * time.Second},
+		{nil, []string{"luna-6"}, "auto", 15 * time.Second},
+		{nil, []string{"haiku-5.5", "luna-6"}, "auto", 30 * time.Second},
+		{[]string{"--provider", "anthropic", "--mock"}, nil, "auto", 15 * time.Second},
+		{[]string{"--provider", "anthropic"}, nil, "45s", 45 * time.Second}, // explicit wins
+		{nil, nil, "0", 0},
+	} {
+		got, err := parse(tc.args...).moveTimeout(tc.flag, tc.ids)
+		if err != nil || got != tc.want {
+			t.Errorf("%v %v %s: got %v, %v; want %v", tc.args, tc.ids, tc.flag, got, err, tc.want)
+		}
+	}
+	for _, bad := range []string{"soon", "-5s", ""} {
+		if _, err := parse().moveTimeout(bad, nil); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+}

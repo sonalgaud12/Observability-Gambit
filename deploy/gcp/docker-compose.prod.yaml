@@ -78,7 +78,7 @@ services:
         --max-games-per-day ${GAMBIT_MAX_GAMES_PER_DAY:-150}
         --idle-timeout ${GAMBIT_IDLE_TIMEOUT:-3m}
         --game-token-budget ${GAMBIT_GAME_TOKEN_BUDGET:-300000}
-        --move-timeout 15s
+        --move-timeout ${GAMBIT_MOVE_TIMEOUT:-auto}
         --trace-url "https://dash.${GAMBIT_DOMAIN:?set GAMBIT_DOMAIN}/explore?schemaVersion=1&panes=%7B%22a%22%3A%7B%22datasource%22%3A%22tempo%22%2C%22queries%22%3A%5B%7B%22datasource%22%3A%7B%22type%22%3A%22tempo%22%2C%22uid%22%3A%22tempo%22%7D%2C%22query%22%3A%22{trace_id}%22%2C%22queryType%22%3A%22traceql%22%2C%22refId%22%3A%22A%22%7D%5D%2C%22range%22%3A%7B%22from%22%3A%22{from}%22%2C%22to%22%3A%22{to}%22%7D%7D%7D&orgId=1"
         $${GAMBIT_EXTRA_ARGS:-}
     environment:
@@ -89,6 +89,9 @@ services:
       OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: ${OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Claude's reasoning effort for the haiku-5.5 option (low, medium, high, ...);
+      # empty = the model's default (medium). --move-timeout auto follows it.
+      GAMBIT_EFFORT: ${GAMBIT_EFFORT:-}
       GAMBIT_EXTRA_ARGS: ${GAMBIT_EXTRA_ARGS:-}
     volumes:
       - ./data:/app/data
