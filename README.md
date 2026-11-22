@@ -206,6 +206,11 @@ calls, tokens and retries ticking up), sees its move land, then watches
 Stockfish grade it and opens that move's trace. The recorded-game replay is
 untouched: `/` still serves it, and `/live.html` links back to it.
 
+The **Tutorial** tab (`/tutorial.html`) is a short guided walkthrough for someone new
+to all this: the board, a move's trace, how blunders are graded, and what
+predicting one from telemetry means. It runs on a bundled sample game, so it
+needs no API key, no Stockfish and no running backend.
+
 ```bash
 make live-mock                     # offline mock model, no API key (rehearsal)
 make live MODEL=gpt-4o-mini        # a real model, same variables as `make play`

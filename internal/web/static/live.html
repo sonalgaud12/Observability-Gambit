@@ -16,6 +16,10 @@
   header { display: flex; align-items: center; gap: 12px 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   h1 span { color: var(--muted); font-weight: 400; }
+  nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav.tabs a { color: var(--muted); text-decoration: none; font-weight: 600; padding: 5px 12px; border-radius: 6px; border: 1px solid transparent; }
+  nav.tabs a:hover { color: var(--text); border-color: var(--line); }
+  nav.tabs a[aria-current="page"] { color: var(--text); background: var(--panel); border-color: var(--line); }
   select, button, input[type=text] { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; }
   button, select { cursor: pointer; }
   button:hover:not(:disabled), select:hover { border-color: var(--accent); }
@@ -139,7 +143,11 @@
   <h1>The Observability Gambit <span>· play the agent</span></h1>
   <span id="modelBadge" class="muted"></span>
   <span id="mockBadge" class="badge mock" hidden>Mock model · not a result</span>
-  <a class="link spacer" href="index.html">Recorded games ▸</a>
+  <nav class="tabs spacer" aria-label="Views">
+    <a href="index.html">Recorded games</a>
+    <a href="live.html" aria-current="page">Play the agent</a>
+    <a href="tutorial.html">Tutorial</a>
+  </nav>
 </header>
 <div id="conn" role="alert" hidden></div>
 

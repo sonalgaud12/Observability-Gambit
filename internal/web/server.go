@@ -104,6 +104,9 @@ func newServer(o Options) (*server, http.Handler, error) {
 	sub, _ := fs.Sub(static, "static")
 	mux := http.NewServeMux()
 	mux.Handle("/", http.FileServer(http.FS(sub)))
+	mux.HandleFunc("/tutorial", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "tutorial.html", http.StatusFound)
+	})
 	mux.HandleFunc("/healthz", s.healthz)
 	mux.HandleFunc("/api/config", s.config)
 	mux.HandleFunc("/api/games", s.listGames)

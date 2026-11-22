@@ -17,6 +17,10 @@
   header { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
   h1 span { color: var(--muted); font-weight: 400; }
+  nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav.tabs a { color: var(--muted); text-decoration: none; font-weight: 600; padding: 5px 12px; border-radius: 6px; border: 1px solid transparent; }
+  nav.tabs a:hover { color: var(--text); border-color: var(--line); }
+  nav.tabs a[aria-current="page"] { color: var(--text); background: var(--panel); border-color: var(--line); }
   select, button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; font: inherit; cursor: pointer; }
   button:hover, select:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
@@ -73,7 +77,11 @@
   <h1>The Observability Gambit <span>· can traces see the blunder coming?</span></h1>
   <select id="gamePick" aria-label="Game"></select>
   <span id="mockBadge" class="badge mock" hidden>Mock data · not a result</span>
-  <a id="liveLink" href="live.html" hidden style="color:var(--accent);text-decoration:none;font-weight:600">Play the agent ▸</a>
+  <nav class="tabs" aria-label="Views">
+    <a href="index.html" aria-current="page">Recorded games</a>
+    <a href="live.html" id="liveTab" hidden>Play the agent</a>
+    <a href="tutorial.html">Tutorial</a>
+  </nav>
   <span class="muted" style="margin-left:auto;font-size:13px"><kbd>←</kbd><kbd>→</kbd> step · <kbd>space</kbd> play · <kbd>b</kbd> next blunder</span>
 </header>
 
@@ -117,7 +125,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;"
 async function init() {
   cfg = await (await fetch("api/config")).json();
   if (cfg.mock) $("#mockBadge").hidden = false;
-  if (cfg.live) $("#liveLink").hidden = false;
+  if (cfg.live) $("#liveTab").hidden = false;
   const games = await (await fetch("api/games")).json();
   const pick = $("#gamePick");
   for (const g of games) {
