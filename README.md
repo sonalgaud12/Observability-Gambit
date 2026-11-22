@@ -48,6 +48,13 @@ Grading is a **sibling** of the decision, not a child, so decision latency never
 includes engine time. The label lives on the root span, so the Collector's tail
 sampler can keep every blunder.
 
+Alongside the traces, the SDK sends the GenAI convention **metrics**
+(`gen_ai.client.inference.*`, `gen_ai.invoke_agent.*`,
+`gen_ai.execute_tool.duration`) and **events** as log records: Stockfish's grade
+becomes a `gen_ai.evaluation.result` event correlated with the
+`invoke_agent` span. [docs/semconv-coverage.md](docs/semconv-coverage.md)
+lists every key, metric and event, and what the conventions do not cover.
+
 ## Quick start (no API key)
 
 Needs Go 1.23+, Docker, and Stockfish (`brew install stockfish` / `apt install stockfish`).
@@ -103,14 +110,17 @@ By default nothing leaves your machine. To also send the traces to a Grafana
 Cloud stack, copy `.env.cloud.example` to `.env.cloud` (git-ignored), fill in
 the OTLP endpoint, instance ID and token, then use `make up-cloud` instead of
 `make up`. The local pipelines (ClickHouse, Jaeger, file, spanmetrics) are
-unchanged; `collector/cloud.yaml` adds one more trace pipeline beside them.
+unchanged; `collector/cloud.yaml` adds a trace, a metrics and a logs pipeline
+beside them.
 
 It does three things on the Cloud copy only:
 
-- Copies `gen_ai.input.messages` / `gen_ai.output.messages` to
-  `gambit.prompt.input` / `gambit.prompt.output`. Grafana Cloud intentionally
-  strips the original two attributes from stored spans (open-source Tempo
-  keeps them), so this keeps the prompts queryable.
+- Copies `gen_ai.input.messages` / `gen_ai.output.messages` /
+  `gen_ai.system_instructions` to `gambit.prompt.input` / `gambit.prompt.output`
+  / `gambit.prompt.system`. Grafana Cloud intentionally strips the original
+  attributes from stored spans (open-source Tempo keeps them), so this keeps the
+  prompts queryable. With content capture on, the same content also arrives in
+  Loki as the `gen_ai.client.inference.operation.details` event.
 - Sets `agento11y.record=true`, so conversations also show up in Grafana Cloud
   Agent Observability.
 - Adds `gambit.run` and `gambit.model` resource attributes (from `GAMBIT_RUN`
@@ -388,10 +398,21 @@ version you present; these conventions are moving.
   parts format) is what makes the blunder trace explainable on stage.
 
 **Gaps**
-- **No outcome or quality signal.** The label arrives after `invoke_agent` has
-  ended. That forces a root span to carry it, and it means spanmetrics cannot
-  slice *decision* latency by move class; you have to join in the backend.
-- **Reasoning tokens** have no stable key (here: `gambit.usage.reasoning_tokens`).
+- **No outcome on the span.** The label arrives after `invoke_agent` has
+  ended. `gen_ai.evaluation.result` fits Stockfish's grade exactly, but it is an
+  event: we emit it with the ended `invoke_agent` span's IDs, and the span
+  itself never learns the outcome. So a root span still carries the label, and
+  spanmetrics cannot slice *decision* latency by move class; you have to join
+  in the backend.
+- **Reasoning tokens** now have a key, `gen_ai.usage.reasoning.output_tokens`
+  (it replaced our `gambit.usage.reasoning_tokens`), but only on the chat span:
+  the `invoke_agent` span has no reasoning-token total.
+- **The conventions moved repositories.** They now live in
+  [semantic-conventions-genai](https://github.com/open-telemetry/semantic-conventions-genai);
+  the gen-ai pages in the main repo are stubs that point there. On the way,
+  `gen_ai.client.token.usage` was replaced by `gen_ai.client.inference.usage.*`
+  counters, and `gen_ai.client.operation.duration` became "do not use for
+  inference": model calls report `gen_ai.client.inference.duration` instead.
 - **Invalid agent output** has no convention. "The model answered, but with an
   illegal action" is modeled as `chess.validate_move` spans with
   `error.type=illegal_move` plus a retry count.
@@ -428,3 +449,14 @@ Standard OTel environment variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT`
 `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_SDK_DISABLED`, and
 `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` for prompt/completion
 capture (the Makefile turns it on).
+
+Traces, metrics and logs all go to the same OTLP endpoint. To send traces only
+(for a Collector without metrics or logs pipelines), set
+`OTEL_METRICS_EXPORTER=none` and/or `OTEL_LOGS_EXPORTER=none`.
+
+Content capture covers every opt-in key: `gen_ai.system_instructions`,
+`gen_ai.input.messages`, `gen_ai.output.messages` (including `reasoning` parts
+when the server returns visible reasoning), `gen_ai.tool.definitions`,
+`gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`, plus the
+`gen_ai.client.inference.operation.details` event. With it off, none of them
+are recorded.

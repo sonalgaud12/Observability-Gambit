@@ -621,6 +621,7 @@ func (s *Session) run(ctx context.Context, seq int) {
 				s.notice("info", fmt.Sprintf("The scripted move %q is not legal in this position: play freely from here.", s.script[scriptIdx]))
 			}
 		}
+		s.human.Expect(g) // accept a move before announcing the turn, not after
 		s.emit("human_turn", map[string]any{
 			"ply": len(g.Moves()) + 1, "fen": pos.String(), "legal": legal,
 			"scripted": scripted, "scripted_uci": scriptedUCI,

@@ -75,10 +75,11 @@ var (
 // HumanOpponent is fed moves from outside (the HTTP API): Move blocks until
 // Submit supplies a legal move for the position being waited on.
 type HumanOpponent struct {
-	mu   sync.Mutex
-	pos  *chess.Position // the position awaiting a move; nil when it is not the human's turn
-	in   chan humanInput
-	done bool
+	mu       sync.Mutex
+	pos      *chess.Position // the position awaiting a move; nil when it is not the human's turn
+	in       chan humanInput
+	done     bool
+	expected bool // Expect opened the turn; the next Move must not reopen it
 }
 
 type humanInput struct {
@@ -95,6 +96,26 @@ func (h *HumanOpponent) Kind() string   { return "human" }
 func (h *HumanOpponent) NewGame() error { return nil }
 func (h *HumanOpponent) Close()         {}
 
+// Expect opens the human's turn on g's position, so Submit accepts a move
+// from now on. Call it before telling the player it is their turn: a move
+// submitted between the announcement and Move is then kept for Move instead
+// of being refused as "not your turn".
+func (h *HumanOpponent) Expect(g *chess.Game) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.open(g.Position())
+	h.expected = true
+}
+
+// open starts a turn. The caller holds h.mu.
+func (h *HumanOpponent) open(pos *chess.Position) {
+	h.pos = pos
+	select { // drop an input that arrived for an earlier turn
+	case <-h.in:
+	default:
+	}
+}
+
 // Move implements Opponent.
 func (h *HumanOpponent) Move(ctx context.Context, g *chess.Game) (*chess.Move, error) {
 	h.mu.Lock()
@@ -102,10 +123,12 @@ func (h *HumanOpponent) Move(ctx context.Context, g *chess.Game) (*chess.Move, e
 		h.mu.Unlock()
 		return nil, ErrResigned
 	}
-	h.pos = g.Position()
-	select { // drop an input that arrived for an earlier turn
-	case <-h.in:
-	default:
+	if h.expected {
+		// Expect already opened this turn, and a move may be waiting in
+		// h.in: reopening would drop it.
+		h.expected = false
+	} else {
+		h.open(g.Position())
 	}
 	h.mu.Unlock()
 

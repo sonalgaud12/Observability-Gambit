@@ -19,12 +19,19 @@ import (
 
 	"github.com/sonalgaud12/observability-gambit/internal/llm"
 	sc "github.com/sonalgaud12/observability-gambit/internal/semconv"
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 )
 
 const instrumentationName = "github.com/sonalgaud12/observability-gambit/internal/agent"
 
 // Name is the gen_ai.agent.name value.
 const Name = "chess-agent"
+
+// Description is the gen_ai.agent.description value.
+const Description = "Plays one side of a chess game: reads the position, may call the legal_moves and threats tools, and answers with one move in SAN."
+
+// Version is the gen_ai.agent.version value: the demo's release.
+const Version = telemetry.Version
 
 // Config controls how the agent plays.
 type Config struct {
@@ -42,7 +49,9 @@ type Agent struct {
 	cfg    Config
 	llm    llm.Client
 	tracer trace.Tracer
+	genai  *telemetry.GenAI
 	rng    *rand.Rand
+	prompt string // gen_ai.prompt.version, fixed per config
 
 	// OnProgress, if set, is called with the running stats of the current
 	// decision after every chat call and every rejected move, so a live UI can
@@ -58,7 +67,12 @@ func New(cfg Config, client llm.Client, seed int64) *Agent {
 	if cfg.MaxToolRounds == 0 {
 		cfg.MaxToolRounds = 2
 	}
-	return &Agent{cfg: cfg, llm: client, tracer: otel.Tracer(instrumentationName), rng: rand.New(rand.NewSource(seed))}
+	a := &Agent{
+		cfg: cfg, llm: client, rng: rand.New(rand.NewSource(seed)),
+		tracer: otel.Tracer(instrumentationName), genai: telemetry.NewGenAI(instrumentationName),
+	}
+	a.prompt = a.PromptVersion()
+	return a
 }
 
 // Stats are the trace-derived features of one move decision.
@@ -74,6 +88,8 @@ type Stats struct {
 	TimedOut        bool // the context deadline ended the decision; implies Fallback
 	LLMErrors       int
 	Reasoning       string // the final answer text
+	ResponseID      string // gen_ai.response.id of the call that produced the move
+	FinishReason    string // finish reason of that call
 }
 
 // Choose asks the model for a move in the game's current position.
@@ -106,6 +122,7 @@ func (a *Agent) Choose(ctx context.Context, g *chess.Game) (*chess.Move, Stats, 
 			continue
 		}
 		st.Reasoning = resp.Message.Content
+		st.ResponseID, st.FinishReason = resp.ID, resp.FinishReason
 		if resp.FinishReason == "length" {
 			st.FinishLength = true
 		}
@@ -149,6 +166,7 @@ func (a *Agent) complete(ctx context.Context, msgs *[]llm.Message, tools []llm.T
 		resp, err := a.llm.Chat(ctx, llm.Request{
 			Model: a.cfg.Model, Messages: *msgs, Tools: offer,
 			Temperature: a.cfg.Temperature, MaxTokens: a.cfg.MaxTokens,
+			PromptName: PromptName, PromptVersion: a.prompt,
 		})
 		st.ChatCalls++
 		if err != nil {
@@ -186,14 +204,33 @@ func sleep(ctx context.Context, d time.Duration) {
 	}
 }
 
-func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, pos *chess.Position) string {
-	_, span := a.tracer.Start(ctx, sc.OpExecuteTool+" "+tc.Name, trace.WithAttributes(
+func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, pos *chess.Position) (result string) {
+	attrs := []attribute.KeyValue{
 		sc.GenAIOperationName.String(sc.OpExecuteTool),
 		sc.GenAIToolName.String(tc.Name),
-		sc.GenAIToolCallID.String(tc.ID),
 		sc.GenAIToolType.String("function"),
-	))
-	defer span.End()
+		sc.GenAIAgentName.String(Name),
+	}
+	if tc.ID != "" { // conditionally required: only if the model supplied one
+		attrs = append(attrs, sc.GenAIToolCallID.String(tc.ID))
+	}
+	if d := toolDescription(tc.Name); d != "" {
+		attrs = append(attrs, sc.GenAIToolDescription.String(d))
+	}
+	capture := telemetry.CaptureContent()
+	if capture {
+		attrs = append(attrs, sc.GenAIToolCallArguments.String(tc.Arguments))
+	}
+	start := time.Now()
+	tctx, span := a.tracer.Start(ctx, sc.OpExecuteTool+" "+tc.Name, trace.WithAttributes(attrs...))
+	errType := ""
+	defer func() {
+		if capture {
+			span.SetAttributes(sc.GenAIToolCallResult.String(result))
+		}
+		a.genai.ToolDone(tctx, tc.Name, "function", Name, errType, time.Since(start))
+		span.End()
+	}()
 
 	switch tc.Name {
 	case "legal_moves":
@@ -201,10 +238,23 @@ func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, pos *chess.Positio
 	case "threats":
 		return threats(pos)
 	default:
+		errType = "unknown_tool"
+		err := fmt.Errorf("unknown tool %q", tc.Name)
 		span.SetStatus(codes.Error, "unknown tool")
-		span.SetAttributes(sc.ErrorType.String("unknown_tool"))
+		span.SetAttributes(sc.ErrorType.String(errType))
+		a.genai.Exception(tctx, sc.EventExecuteToolException, errType, err)
 		return "error: unknown tool " + tc.Name
 	}
+}
+
+// toolDescription is the description the model was given for a tool.
+func toolDescription(name string) string {
+	for _, t := range toolDefs {
+		if t.Name == name {
+			return t.Description
+		}
+	}
+	return ""
 }
 
 func (a *Agent) validate(ctx context.Context, pos *chess.Position, candidate string, attempt int) *chess.Move {
@@ -281,19 +331,43 @@ func sanList(pos *chess.Position, moves []*chess.Move) string {
 	return strings.Join(out, ", ")
 }
 
-// Attrs returns the trace-feature attributes for the invoke_agent span.
+// Attrs returns the trace-feature attributes for the invoke_agent span:
+// token totals for the whole decision (gen_ai.usage.*), the final finish
+// reason, and our own counters.
+//
+// The invoke_agent span has no reasoning-token key in the conventions, so
+// reasoning tokens are only on the chat spans
+// (gen_ai.usage.reasoning.output_tokens) and in the inference metrics.
 func (s Stats) Attrs() []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
 		sc.GenAIUsageInputTokens.Int(s.InputTokens),
 		sc.GenAIUsageOutputTokens.Int(s.OutputTokens),
-		sc.GambitUsageReasoningTokens.Int(s.ReasoningTokens),
 		sc.ChessIllegalAttempts.Int(s.IllegalAttempts),
 		sc.ChessFallback.Bool(s.Fallback),
-		attribute.Int("gambit.chat_calls", s.ChatCalls),
-		attribute.Int("gambit.tool_calls", s.ToolCalls),
+		sc.GambitChatCalls.Int(s.ChatCalls),
+		sc.GambitToolCalls.Int(s.ToolCalls),
+	}
+	if s.FinishReason != "" && !s.Fallback {
+		attrs = append(attrs, sc.GenAIResponseFinishReasons.StringSlice([]string{s.FinishReason}))
 	}
 	if s.TimedOut {
 		attrs = append(attrs, sc.GambitTimedOut.Bool(true))
+	}
+	return attrs
+}
+
+// SpanAttrs are the invoke_agent span attributes known before the decision
+// starts: who the agent is and how it calls the model.
+func (a *Agent) SpanAttrs() []attribute.KeyValue {
+	attrs := []attribute.KeyValue{
+		sc.GenAIAgentVersion.String(Version),
+		sc.GenAIAgentDescription.String(Description),
+	}
+	if a.cfg.Temperature >= 0 {
+		attrs = append(attrs, sc.GenAIRequestTemperature.Float64(a.cfg.Temperature))
+	}
+	if a.cfg.MaxTokens > 0 {
+		attrs = append(attrs, sc.GenAIRequestMaxTokens.Int(a.cfg.MaxTokens))
 	}
 	return attrs
 }

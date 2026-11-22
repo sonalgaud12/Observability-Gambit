@@ -10,6 +10,11 @@
 //	│   ├── chess.validate_move      illegal? -> another chat span follows
 //	│   └── ...
 //	└── chess.evaluate               Stockfish grading at fixed depth (label only)
+//
+// The grade is also emitted as a gen_ai.evaluation.result event (a log
+// record) correlated with the invoke_agent span. The grade only exists after
+// that span has ended, and the conventions have no way to put an outcome back
+// onto an ended span: the event, carrying the span's IDs, is the closest fit.
 package game
 
 import (
@@ -24,7 +29,9 @@ import (
 
 	"github.com/notnil/chess"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/sonalgaud12/observability-gambit/internal/agent"
@@ -32,6 +39,7 @@ import (
 	"github.com/sonalgaud12/observability-gambit/internal/engine"
 	"github.com/sonalgaud12/observability-gambit/internal/llm"
 	sc "github.com/sonalgaud12/observability-gambit/internal/semconv"
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 )
 
 const instrumentationName = "github.com/sonalgaud12/observability-gambit/internal/game"
@@ -113,6 +121,7 @@ type player struct {
 	grader   MoveGrader
 	brain    *engine.Engine
 	tracer   trace.Tracer
+	genai    *telemetry.GenAI
 	worker   int
 }
 
@@ -146,7 +155,7 @@ func newPlayer(cfg Config, worker int) (*player, error) {
 // has no opponent: the caller sets one (batch games) or supplies it per game
 // (live games).
 func newGradingPlayer(cfg Config, worker int) (*player, error) {
-	p := &player{cfg: cfg, tracer: otel.Tracer(instrumentationName), worker: worker}
+	p := &player{cfg: cfg, tracer: otel.Tracer(instrumentationName), genai: telemetry.NewGenAI(instrumentationName), worker: worker}
 
 	if cfg.Grader != nil {
 		p.grader = cfg.Grader
@@ -274,6 +283,7 @@ type pendingMove struct {
 	p      *player
 	ctx    context.Context // carries the open root span
 	root   trace.Span
+	agent  trace.SpanContext // the ended invoke_agent span, for the evaluation event
 	before *chess.Position
 	after  *chess.Game // a snapshot: the live game moves on while this is graded
 	mv     *chess.Move
@@ -331,13 +341,13 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	}
 
 	// --- the decision ---
-	actx, span := p.tracer.Start(ctx, sc.OpInvokeAgent+" "+agent.Name, trace.WithAttributes(
+	actx, span := p.tracer.Start(ctx, sc.OpInvokeAgent+" "+agent.Name, trace.WithAttributes(append([]attribute.KeyValue{
 		sc.GenAIOperationName.String(sc.OpInvokeAgent),
 		sc.GenAIAgentName.String(agent.Name),
 		sc.GenAIProviderName.String(provider),
 		sc.GenAIRequestModel.String(model),
 		sc.GenAIConversationID.String(gameID),
-	))
+	}, ag.SpanAttrs()...)...))
 	if o.mode != "" {
 		// Also on the decision span, which reaches the Collector before the
 		// root does, so a tail sampler can already see the mode.
@@ -358,6 +368,9 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(sc.ErrorType.String("_OTHER"))
+		p.genai.Exception(actx, sc.EventInvokeAgentException, fmt.Sprintf("%T", err), err)
+		p.genai.AgentDone(actx, agent.Name, model, "_OTHER", latency, st.ChatCalls, st.ToolCalls)
 		span.End()
 		root.End()
 		return nil, err
@@ -374,6 +387,15 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 		span.SetStatus(codes.Error, "fell back to a random legal move")
 		span.SetAttributes(sc.ErrorType.String("fallback_move"))
 	}
+	errType := ""
+	switch {
+	case st.TimedOut:
+		errType = "timeout"
+	case st.Fallback:
+		errType = "fallback_move"
+	}
+	p.genai.AgentDone(actx, agent.Name, model, errType, latency, st.ChatCalls, st.ToolCalls)
+	agentSpan := span.SpanContext()
 	span.End()
 
 	if err := g.Move(mv); err != nil {
@@ -381,7 +403,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 		return nil, fmt.Errorf("apply %s: %w", san, err)
 	}
 	pm := &pendingMove{
-		p: p, ctx: ctx, root: root, before: before, after: g.Clone(), mv: mv,
+		p: p, ctx: ctx, root: root, agent: agentSpan, before: before, after: g.Clone(), mv: mv,
 		gameID: gameID, provider: provider, model: model, mode: o.mode,
 		ply: ply, moveNo: moveNo, legal: len(legal), inCheck: inCheck, material: material,
 		san: san, uci: uci, st: st, latency: latency,
@@ -420,6 +442,7 @@ func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
 	)
 	ev.End()
 	pm.grade = gr
+	pm.emitEvaluation(gr)
 
 	pm.root.SetAttributes(
 		sc.ChessMoveSAN.String(pm.san),
@@ -458,6 +481,44 @@ func (pm *pendingMove) finish() (dataset.MoveRecord, error) {
 		rec.Reasoning = truncate(st.Reasoning, 4000)
 	}
 	return rec, nil
+}
+
+// EvaluationName is the gen_ai.evaluation.name of Stockfish's move grade.
+const EvaluationName = "stockfish_move_quality"
+
+// emitEvaluation records Stockfish's grade as a gen_ai.evaluation.result
+// event, correlated with the decision's invoke_agent span (which has ended by
+// now) and, when a model answer produced the move, with that answer's
+// gen_ai.response.id.
+//
+// score.value is the drop in winning chances the move caused (0 = best,
+// higher = worse, as a fraction of 1); score.label is the grade
+// (best | good | inaccuracy | mistake | blunder).
+func (pm *pendingMove) emitEvaluation(gr Grade) {
+	if !pm.agent.IsValid() {
+		return
+	}
+	attrs := []attribute.KeyValue{
+		sc.GenAIEvaluationName.String(EvaluationName),
+		sc.GenAIEvaluationScoreValue.Float64(gr.WinChanceDrop),
+		sc.GenAIEvaluationScoreLabel.String(gr.Class),
+		sc.GenAIEvaluationExplanation.String(fmt.Sprintf(
+			"Played %s; Stockfish's best was %s at depth %d. Centipawn loss %d, winning chances dropped by %.3f.",
+			pm.san, gr.BestMove, pm.p.cfg.GraderDepth, gr.CPLoss, gr.WinChanceDrop)),
+		// Our own keys, so the event can be read without joining back to the trace.
+		sc.ChessGameID.String(pm.gameID),
+		sc.ChessPly.Int(pm.ply),
+	}
+	if pm.st.ResponseID != "" && !pm.st.Fallback {
+		attrs = append(attrs, sc.GenAIResponseID.String(pm.st.ResponseID))
+	}
+	if pm.st.Fallback {
+		// The move was random, not the model's: say so, so evaluations of
+		// fallback moves can be left out of model-quality views.
+		attrs = append(attrs, sc.ChessFallback.Bool(true))
+	}
+	ctx := trace.ContextWithSpanContext(pm.ctx, pm.agent)
+	pm.p.genai.Event(ctx, sc.EventEvaluationResult, otellog.SeverityInfo, attrs...)
 }
 
 func (p *player) opponentMove(ctx context.Context, g *chess.Game) error {

@@ -114,6 +114,12 @@ func (m *Mock) Chat(ctx context.Context, req Request) (Response, error) {
 		InputTokens: inputTokens,
 		Message:     Message{Role: "assistant"},
 	}
+	// Prompt caching, the way OpenAI reports it: after the first call the
+	// system prompt is served from cache. No randomness, so the mock's games
+	// stay the same as before this field existed.
+	if m.calls > 1 && len(req.Messages) > 0 && req.Messages[0].Role == "system" {
+		resp.CacheReadTokens = min(len(req.Messages[0].Content)/4, inputTokens)
+	}
 
 	// Maybe call a tool first.
 	if len(req.Tools) > 0 && !toolUsed && m.rng.Float64() < 0.25+0.45*stress {

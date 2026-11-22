@@ -149,3 +149,26 @@ func TestRandomOpponentPlaysLegalMoves(t *testing.T) {
 	var _ Opponent = &engineOpponent{}
 	var _ Opponent = NewHumanOpponent()
 }
+
+// A move submitted right after the turn is announced, before the game loop
+// is back in Move, is kept rather than refused.
+func TestHumanOpponentAcceptsAMoveBetweenExpectAndMove(t *testing.T) {
+	h := NewHumanOpponent()
+	g := chess.NewGame()
+	h.Expect(g)
+	if _, err := h.Submit("e2e4"); err != nil {
+		t.Fatalf("Submit after Expect: %v", err)
+	}
+	if _, err := h.Submit("d2d4"); !errors.Is(err, ErrNotYourTurn) {
+		t.Errorf("a second move in the same turn: err = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	mv, err := h.Move(ctx, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (chess.UCINotation{}).Encode(g.Position(), mv); got != "e2e4" {
+		t.Errorf("Move = %s, want e2e4", got)
+	}
+}

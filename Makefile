@@ -33,7 +33,7 @@ test:
 	go test ./...
 
 up:
-	mkdir -p data/traces data/replay out
+	mkdir -p data/traces data/events data/replay out
 	docker compose up -d
 	@echo "Grafana    http://localhost:3000"
 	@echo "Jaeger     http://localhost:16686"
@@ -42,14 +42,14 @@ up:
 # Same stack plus the Grafana Cloud route. Needs .env.cloud (see .env.cloud.example).
 up-cloud:
 	@test -f .env.cloud || { echo "missing .env.cloud: copy .env.cloud.example and fill it in"; exit 1; }
-	mkdir -p data/traces data/replay out
+	mkdir -p data/traces data/events data/replay out
 	docker compose --env-file .env.cloud -f docker-compose.yaml -f docker-compose.cloud.yaml up -d
 
 # The cloud play stack (game server, Caddy, ports on 127.0.0.1). Needs .env.prod
 # (see deploy/gcp/env.example) and Caddy's passcode file; on the VM, systemd does this.
 up-prod:
 	@test -f .env.prod || { echo "missing .env.prod: copy deploy/gcp/env.example and fill it in (see deploy/gcp/README.md)"; exit 1; }
-	mkdir -p data/traces data/replay out
+	mkdir -p data/traces data/events data/replay out
 	docker compose --env-file .env.prod -f docker-compose.yaml -f docker-compose.cloud.yaml -f deploy/gcp/docker-compose.prod.yaml up -d --build
 
 down:

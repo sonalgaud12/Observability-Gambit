@@ -4,6 +4,8 @@
 #        traces/all      -> ClickHouse (SQL correlation), OTLP-JSON file (dataset + replay), spanmetrics
 #        traces/sampled  -> tail_sampling -> Jaeger  (only the interesting traces)
 #        metrics         -> Prometheus (RED metrics per model and per move class, with exemplars)
+#        metrics/genai   -> Prometheus (the SDK's gen_ai.* convention metrics)
+#        logs/genai      -> ClickHouse + OTLP-JSON file (gen_ai.* events, e.g. gen_ai.evaluation.result)
 #
 # The point of the two trace pipelines: the analysis store keeps everything,
 # while the trace UI keeps only what a human should look at, decided AFTER the
@@ -91,6 +93,7 @@ exporters:
     endpoint: tcp://clickhouse:9000?dial_timeout=10s
     database: otel
     traces_table_name: otel_traces
+    logs_table_name: otel_logs
     create_schema: true
     timeout: 10s
     retry_on_failure:
@@ -102,6 +105,13 @@ exporters:
     rotation:
       max_megabytes: 200
       max_backups: 20
+
+  # Every GenAI event (gen_ai.evaluation.result, *.exception, ...), as OTLP JSON lines.
+  file/events:
+    path: /data/events/events.jsonl
+    rotation:
+      max_megabytes: 100
+      max_backups: 10
 
   prometheus:
     endpoint: 0.0.0.0:8889
@@ -131,3 +141,13 @@ service:
       receivers: [spanmetrics]
       processors: [batch]
       exporters: [prometheus]
+    # gen_ai.client.inference.*, gen_ai.invoke_agent.*, gen_ai.execute_tool.duration
+    # from the SDK. Prometheus names them e.g. gen_ai_client_inference_duration_seconds.
+    metrics/genai:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs/genai:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [clickhouse, file/events]

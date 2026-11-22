@@ -48,7 +48,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p data/traces data/replay out
+mkdir -p data/traces data/events data/replay out
 openssl rand -hex 12 >"$tmp/pass.sonal"
 openssl rand -hex 12 >"$tmp/pass.nic"
 printf 'sonal:%s\nnic:%s\n' "$(cat "$tmp/pass.sonal")" "$(cat "$tmp/pass.nic")" | deploy/gcp/render-auth.sh "$tmp/auth"

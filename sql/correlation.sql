@@ -40,7 +40,10 @@ WITH
            count()                                                         AS chat_calls,
            sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.input_tokens']))  AS input_tokens,
            sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.output_tokens'])) AS output_tokens,
-           sum(toUInt64OrZero(SpanAttributes['gambit.usage.reasoning_tokens'])) AS reasoning_tokens,
+           -- gen_ai.usage.reasoning.output_tokens since the semconv update;
+           -- older recordings used gambit.usage.reasoning_tokens.
+           sum(toUInt64OrZero(SpanAttributes['gen_ai.usage.reasoning.output_tokens'])
+             + toUInt64OrZero(SpanAttributes['gambit.usage.reasoning_tokens'])) AS reasoning_tokens,
            countIf(position(SpanAttributes['gen_ai.response.finish_reasons'], 'length') > 0) AS truncated_calls,
            max(Duration) / 1e6                                             AS slowest_call_ms
     FROM otel.otel_traces
