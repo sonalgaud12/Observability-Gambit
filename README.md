@@ -209,7 +209,8 @@ untouched: `/` still serves it, and `/live.html` links back to it.
 The **Tutorial** tab (`/tutorial.html`) is a short guided walkthrough for someone new
 to all this: the board, a move's trace, how blunders are graded, and what
 predicting one from telemetry means. It runs on a bundled sample game, so it
-needs no API key, no Stockfish and no running backend.
+needs no API key and no Stockfish, and works without `--live`; the link to the
+live page only appears when human mode is on.
 
 ```bash
 make live-mock                     # offline mock model, no API key (rehearsal)
