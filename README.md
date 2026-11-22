@@ -366,10 +366,16 @@ with a countdown. These things keep it honest:
   retries, errors and a 10% baseline in the trace UI, which made most links read
   "trace not found". (Grafana Cloud was always unsampled.)
 - The default `--trace-url` opens the trace in Grafana Explore on the Tempo datasource,
-  over the last 30 days (Tempo only searches blocks inside the query's time range, so
-  Explore's default one-hour range makes an older trace read "not found").
+  over a window around the move's own start time (`{from}`/`{to}` in the template are
+  filled with epoch ms, 1h before to 3h after). Tempo only searches blocks inside the
+  query's time range, so Explore's default one-hour range would make an older trace
+  read "not found". Replayed recordings keep their original timestamps (see
+  `collector/replay.yaml`), so their links point at the original time. Tempo may clamp
+  the block time of spans far outside its ingestion slack to the ingestion time (not
+  verified here); if a replayed link reads "not found", widen the range in Explore to
+  include today. Old recordings are also dropped once past the retention below.
 - Tempo stores traces on the `tempo` named volume, so they survive `make down` and
-  restarts (`docker compose down -v` deletes them; blocks are kept 30 days).
+  restarts (`docker compose down -v` deletes them; blocks are kept 90 days, set by `block_retention` in `deploy/tempo/tempo.yaml`; raise it, e.g. to `8760h`, to keep replay recordings longer).
 
 ### API
 

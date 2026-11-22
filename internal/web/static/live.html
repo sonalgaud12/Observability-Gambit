@@ -215,7 +215,7 @@ let es = null;
 
 function fresh() {
   return { id: null, humanColor: "white", agentColor: "black", fen: START, legal: {}, myTurn: false, sel: null, last: null,
-           plies: [], agent: {}, human: {}, graded: {}, coach: {}, coachPly: null, coachPicked: null, hover: null, pin: null, thinking: null, follow: true, picked: null, hint: null, scripted: "",
+           plies: [], agent: {}, moveStart: {}, human: {}, graded: {}, coach: {}, coachPly: null, coachPicked: null, hover: null, pin: null, thinking: null, follow: true, picked: null, hint: null, scripted: "",
            over: null, saved: null, error: null, timeoutMS: 0, sending: false };
 }
 
@@ -314,6 +314,7 @@ function handle(type, d) {
       if (S.human[d.ply]) S.human[d.ply].grade = d.failed ? { failed: true } : d;
       break;
     case "agent_thinking":
+      S.moveStart[d.ply] = d.started_ms;
       S.thinking = { ply: d.ply, trace_id: d.trace_id, started: d.started_ms, timeout: d.timeout_ms, chat_calls: 0, tool_calls: 0, input_tokens: 0, output_tokens: 0, illegal_attempts: 0 };
       S.myTurn = false; S.follow = true; S.picked = null;
       break;
@@ -540,7 +541,8 @@ function traceSlot(ply) {
   const a = S.agent[ply];
   if (!a || !cfg.trace_url) return "";
   const delay = live.trace_delay_ms || 0;
-  const href = cfg.trace_url.replace("{trace_id}", a.trace_id);
+  const at = Number.isFinite(S.moveStart[ply]) ? S.moveStart[ply] : Date.now();
+  const href = cfg.trace_url.replace("{trace_id}", a.trace_id).replace("{from}", at - 3600e3).replace("{to}", at + 3 * 3600e3);
   const since = S.graded[ply];
   const wait = since ? Math.max(0, since + delay - Date.now()) : delay;
   if (!since || wait > 0) return `<span class="trace wait">Open trace · ready in ~${Math.ceil(wait / 1000)}s</span>`;

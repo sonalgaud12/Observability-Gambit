@@ -2,7 +2,7 @@
 
 One small VM on Google Cloud runs the whole game for people with a link and a
 passcode: the game server (`gambit serve --live`, Stockfish inside), the open-source
-observability stack (Collector, Jaeger, ClickHouse, Prometheus, Grafana), and Caddy
+observability stack (Collector, Tempo, ClickHouse, Prometheus, Grafana), and Caddy
 for HTTPS and passcodes. The Collector also sends every trace to the shared Grafana
 Cloud stack (the same route as `make up-cloud`).
 
@@ -194,7 +194,7 @@ deploy/gcp/local-test.sh
 
 Runs the production compose files with the mock model (no keys, no spend), a local Caddy certificate
 on `gambit.localhost`, two passcodes, and checks passcode login, `/healthz`, SSE through the proxy,
-the one-game lock from two logins, both model options, passcode labels in Jaeger traces, trace links,
+the one-game lock from two logins, both model options, passcode labels in Tempo traces, trace links,
 the idle timeout, the model allow-list and the same-origin rule. `make up-prod` starts the same stack
 from a `.env.prod` (see `env.example`; it needs a passcode file made by `render-auth.sh`).
 

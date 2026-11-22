@@ -20,8 +20,11 @@ ingester:
 
 compactor:
   compaction:
-    # Keep traces for a month; the rehearsal/talk data is small.
-    block_retention: 720h
+    # Keep traces for 90 days; the rehearsal/talk data is small. Retention is
+    # measured from the block's end time, which comes from the spans' own
+    # timestamps, so a replayed recording older than this is compacted away
+    # again. For a longer window, raise this (e.g. 8760h for a year).
+    block_retention: 2160h
 
 storage:
   trace:

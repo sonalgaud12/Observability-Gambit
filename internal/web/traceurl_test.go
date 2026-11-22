@@ -9,9 +9,12 @@ import (
 
 func TestExploreTraceURL(t *testing.T) {
 	tmpl := ExploreTraceURL("http://localhost:3000/")
-	if strings.Count(tmpl, TraceIDPlaceholder) != 1 {
-		t.Fatalf("want exactly one literal %s in %s", TraceIDPlaceholder, tmpl)
+	for _, ph := range []string{TraceIDPlaceholder, FromPlaceholder, ToPlaceholder} {
+		if strings.Count(tmpl, ph) != 1 {
+			t.Fatalf("want exactly one literal %s in %s", ph, tmpl)
+		}
 	}
+	tmpl = strings.NewReplacer(FromPlaceholder, "1700000000000", ToPlaceholder, "1700010800000").Replace(tmpl)
 	const id = "0123456789abcdef0123456789abcdef"
 	u, err := url.Parse(strings.Replace(tmpl, TraceIDPlaceholder, id, 1))
 	if err != nil {
@@ -37,7 +40,7 @@ func TestExploreTraceURL(t *testing.T) {
 		t.Fatalf("query does not look up the trace on the tempo datasource: %+v", p)
 	}
 	// Explore's default 1h range would hide any older trace from Tempo.
-	if p.Range.From != "now-30d" {
-		t.Fatalf("range %q: traces older than the range read as not found", p.Range.From)
+	if p.Range.From != "1700000000000" || p.Range.To != "1700010800000" {
+		t.Fatalf("range %+v: want the window the UI filled in", p.Range)
 	}
 }

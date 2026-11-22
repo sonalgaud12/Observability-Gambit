@@ -139,7 +139,7 @@ def main():
     st, cfg, _ = req("nic", "GET", "/api/config")
     tu = cfg["trace_url"]
     check("trace_url opens Grafana Explore on the Tempo datasource", tu.startswith(f"https://dash.{HOST}:{PORT}/explore?") or tu.startswith(f"https://dash.{HOST}/explore?"), tu)
-    check("trace_url carries the trace id and a 30-day range", tu.count("{trace_id}") == 1 and "now-30d" in tu, tu)
+    check("trace_url carries the trace id and a from/to range", tu.count("{trace_id}") == 1 and "{from}" in tu and "{to}" in tu, tu)
 
     # idle timeout (20s in this test): start, never move, the slot frees itself
     st, out, _ = req("sonal", "POST", "/api/live/new", {})
