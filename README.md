@@ -149,7 +149,9 @@ the effort you will use on stage and adjust. The trade-off:
   longer than that can reach Jaeger incomplete: raise `decision_wait` with the cap.
   The Grafana Cloud collector (`collector/cloud.yaml`, used by the shared
   deployment) has no tail sampling, so it is not affected.
-- The coach (one comment per human move) has its own fixed 25s cap per call.
+- The coach (one comment per human move) has its own fixed 25s cap per call. On
+  Claude it ignores `--effort`: it always asks for `low` effort with a 2048-token
+  cap so thinking cannot crowd out its few sentences.
 
 Nothing here calls the API in tests; they use canned Messages API responses.
 
