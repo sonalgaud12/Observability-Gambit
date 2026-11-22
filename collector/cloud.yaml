@@ -32,6 +32,7 @@ processors:
         statements:
           - set(attributes["gambit.prompt.input"], attributes["gen_ai.input.messages"]) where attributes["gen_ai.input.messages"] != nil
           - set(attributes["gambit.prompt.output"], attributes["gen_ai.output.messages"]) where attributes["gen_ai.output.messages"] != nil
+          - set(attributes["gambit.prompt.system"], attributes["gen_ai.system_instructions"]) where attributes["gen_ai.system_instructions"] != nil
 
 exporters:
   otlphttp/grafana:
@@ -46,4 +47,16 @@ service:
     traces/cloud:
       receivers: [otlp]
       processors: [memory_limiter, resource/cloud, transform/cloud, batch]
+      exporters: [otlphttp/grafana]
+    # The gen_ai.* convention metrics, and the gen_ai.* events as logs. The
+    # gen_ai.client.inference.operation.details event carries the prompt and
+    # answer (with content capture on), so they reach Loki even though Cloud
+    # traces strip them.
+    metrics/cloud:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/cloud, batch]
+      exporters: [otlphttp/grafana]
+    logs/cloud:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/cloud, batch]
       exporters: [otlphttp/grafana]

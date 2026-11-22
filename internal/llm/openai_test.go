@@ -62,3 +62,48 @@ func TestRequestForOpenAIReasoningModels(t *testing.T) {
 		t.Errorf("max_tokens was sent alongside max_completion_tokens: %v", got)
 	}
 }
+
+// The settings the semconv attributes describe are really sent, and cache
+// tokens and visible reasoning are read back.
+func TestSendsRequestSettingsAndReadsCacheAndReasoning(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &got)
+		io.WriteString(w, `{"id":"x","model":"m","choices":[{"message":{"role":"assistant","content":"e4","reasoning_content":"centre"},"finish_reason":"stop"}],`+
+			`"usage":{"prompt_tokens":30,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":12,"cache_write_tokens":4},"completion_tokens_details":{"reasoning_tokens":9}}}`)
+	}))
+	defer srv.Close()
+	c := NewOpenAICompatible(srv.URL+"/v1", "k", "openai")
+	c.ReasoningEffort = "none"
+	seed := int64(42)
+	resp, err := c.Chat(context.Background(), Request{
+		Model: "m", Temperature: -1, Messages: []Message{{Role: "user", Content: "hi"}},
+		TopP: 0.5, Seed: &seed, StopSequences: []string{"END"}, ReasoningLevel: "high", OutputType: "json",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["top_p"] != 0.5 || got["seed"] != float64(42) || got["reasoning_effort"] != "high" {
+		t.Errorf("request = %v", got)
+	}
+	if stop, _ := got["stop"].([]any); len(stop) != 1 || stop[0] != "END" {
+		t.Errorf("stop = %v", got["stop"])
+	}
+	if rf, _ := got["response_format"].(map[string]any); rf["type"] != "json_object" {
+		t.Errorf("response_format = %v", got["response_format"])
+	}
+	if resp.CacheReadTokens != 12 || resp.CacheWriteTokens != 4 || resp.ReasoningTokens != 9 || resp.Message.Reasoning != "centre" {
+		t.Errorf("response = %+v", resp)
+	}
+	if host, port := c.Endpoint(); host != "127.0.0.1" || port == 0 {
+		t.Errorf("Endpoint = %s:%d", host, port)
+	}
+}
+
+func TestEndpointDefaultsThePort(t *testing.T) {
+	c := NewOpenAICompatible("https://api.openai.com/v1", "", "openai")
+	if host, port := c.Endpoint(); host != "api.openai.com" || port != 443 {
+		t.Errorf("Endpoint = %s:%d", host, port)
+	}
+}

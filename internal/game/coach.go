@@ -2,6 +2,8 @@ package game
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/sonalgaud12/observability-gambit/internal/llm"
 	sc "github.com/sonalgaud12/observability-gambit/internal/semconv"
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 )
 
 // The chess coach (human mode only).
@@ -42,6 +45,19 @@ import (
 // CoachAgentName is the gen_ai.agent.name of the coach, as distinct from the
 // player's agent.Name.
 const CoachAgentName = "coach"
+
+// CoachAgentDescription is the coach's gen_ai.agent.description.
+const CoachAgentDescription = "Explains one chess move to a beginner in plain words, using only facts checked by Stockfish."
+
+// CoachPromptName is the gen_ai.prompt.name of the coach's prompt.
+const CoachPromptName = "chess-coach"
+
+// coachPromptVersion is the gen_ai.prompt.version of the coach's prompt: a
+// hash of its system prompt, so it changes whenever the prompt does.
+var coachPromptVersion = func() string {
+	h := sha256.Sum256([]byte(coachSystemPrompt))
+	return hex.EncodeToString(h[:])[:12]
+}()
 
 // Coach kinds, on the events and in gambit.coach.kind.
 const (
@@ -339,42 +355,58 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 	actx, span := p.tracer.Start(ctx, sc.OpInvokeAgent+" "+CoachAgentName, trace.WithAttributes(
 		sc.GenAIOperationName.String(sc.OpInvokeAgent),
 		sc.GenAIAgentName.String(CoachAgentName),
+		sc.GenAIAgentDescription.String(CoachAgentDescription),
+		sc.GenAIAgentVersion.String(telemetry.Version),
 		sc.GenAIProviderName.String(provider),
 		sc.GenAIRequestModel.String(c.model),
+		sc.GenAIRequestMaxTokens.Int(coachMaxTokens),
 		sc.GenAIConversationID.String(s.ID),
 		sc.GambitRunMode.String("human"),
 		sc.GambitCoachKind.String(kind),
 		sc.GambitCoachSubject.String(subject),
 	))
-	defer span.End()
+	if c.temp >= 0 {
+		span.SetAttributes(sc.GenAIRequestTemperature.Float64(c.temp))
+	}
+	start := time.Now()
+	errType, chatCalls := "", 0
+	defer func() {
+		p.genai.AgentDone(actx, CoachAgentName, c.model, errType, time.Since(start), chatCalls, 0)
+		span.End()
+	}()
 	if s.player != "" {
 		span.SetAttributes(sc.GambitPlayerLabel.String(s.player))
 	}
 	usage := coachUsage{traceID: root.SpanContext().TraceID().String()}
 
-	fail := func(err error) (string, coachUsage, error) {
+	fail := func(err error, et string) (string, coachUsage, error) {
+		errType = et
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
+		span.SetAttributes(sc.ErrorType.String(et))
 		root.SetStatus(codes.Error, err.Error())
+		p.genai.Exception(actx, sc.EventInvokeAgentException, fmt.Sprintf("%T", err), err)
 		return "", usage, err
 	}
 
 	resp, err := c.client.Chat(actx, llm.Request{
 		Model: c.model, Messages: coachMessages(f, kind),
 		Temperature: c.temp, MaxTokens: coachMaxTokens,
+		PromptName: CoachPromptName, PromptVersion: coachPromptVersion,
 	})
+	chatCalls = 1
 	if err != nil {
-		return fail(err)
+		return fail(err, "_OTHER")
 	}
 	usage.in, usage.out = resp.InputTokens, resp.OutputTokens
 	span.SetAttributes(
 		sc.GenAIUsageInputTokens.Int(resp.InputTokens),
 		sc.GenAIUsageOutputTokens.Int(resp.OutputTokens),
+		sc.GenAIResponseFinishReasons.StringSlice([]string{resp.FinishReason}),
 	)
 	text, ok := cleanCoachText(resp.Message.Content)
 	if !ok {
-		span.SetAttributes(sc.ErrorType.String("unreadable_answer"))
-		return fail(errUnreadable)
+		return fail(errUnreadable, "unreadable_answer")
 	}
 	return text, usage, nil
 }

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -43,6 +45,28 @@ func NewOpenAICompatible(baseURL, apiKey, provider string) *OpenAICompatible {
 
 func (c *OpenAICompatible) Provider() string { return c.ProviderName }
 
+// Endpoint implements Endpoint: the host and port of BaseURL, with the
+// scheme's default port when none is given.
+func (c *OpenAICompatible) Endpoint() (string, int) {
+	u, err := url.Parse(c.BaseURL)
+	if err != nil || u.Hostname() == "" {
+		return "", 0
+	}
+	port, _ := strconv.Atoi(u.Port())
+	if port == 0 {
+		switch u.Scheme {
+		case "https":
+			port = 443
+		case "http":
+			port = 80
+		}
+	}
+	return u.Hostname(), port
+}
+
+// DefaultReasoningLevel implements Defaults.
+func (c *OpenAICompatible) DefaultReasoningLevel() string { return c.ReasoningEffort }
+
 type oaTool struct {
 	Type     string  `json:"type"`
 	Function ToolDef `json:"function"`
@@ -62,6 +86,11 @@ type oaMessage struct {
 	Content    *string      `json:"content"`
 	ToolCalls  []oaToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string       `json:"tool_call_id,omitempty"`
+
+	// Visible reasoning from servers that return it (DeepSeek and Ollama use
+	// reasoning_content, OpenRouter uses reasoning). Response only.
+	ReasoningContent string `json:"reasoning_content,omitempty"`
+	ReasoningText    string `json:"reasoning,omitempty"`
 }
 
 type oaRequest struct {
@@ -73,6 +102,11 @@ type oaRequest struct {
 
 	MaxCompletionTokens int    `json:"max_completion_tokens,omitempty"`
 	ReasoningEffort     string `json:"reasoning_effort,omitempty"`
+
+	TopP           *float64          `json:"top_p,omitempty"`
+	Seed           *int64            `json:"seed,omitempty"`
+	Stop           []string          `json:"stop,omitempty"`
+	ResponseFormat map[string]string `json:"response_format,omitempty"`
 }
 
 type oaResponse struct {
@@ -88,6 +122,10 @@ type oaResponse struct {
 		CompletionTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"completion_tokens_details"`
+		PromptTokensDetails struct {
+			CachedTokens     int `json:"cached_tokens"`
+			CacheWriteTokens int `json:"cache_write_tokens"` // OpenRouter
+		} `json:"prompt_tokens_details"`
 	} `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
@@ -105,7 +143,20 @@ func (e *HTTPError) Error() string { return fmt.Sprintf("llm http %d: %s", e.Sta
 
 // Chat implements Client.
 func (c *OpenAICompatible) Chat(ctx context.Context, req Request) (Response, error) {
-	body := oaRequest{Model: req.Model, MaxTokens: req.MaxTokens, ReasoningEffort: c.ReasoningEffort}
+	body := oaRequest{
+		Model: req.Model, MaxTokens: req.MaxTokens, ReasoningEffort: c.ReasoningEffort,
+		Seed: req.Seed, Stop: req.StopSequences,
+	}
+	if req.ReasoningLevel != "" {
+		body.ReasoningEffort = req.ReasoningLevel
+	}
+	if req.TopP > 0 {
+		p := req.TopP
+		body.TopP = &p
+	}
+	if req.OutputType == "json" {
+		body.ResponseFormat = map[string]string{"type": "json_object"}
+	}
 	if c.MaxCompletionTokens {
 		body.MaxTokens, body.MaxCompletionTokens = 0, req.MaxTokens
 	}
@@ -172,9 +223,16 @@ func (c *OpenAICompatible) Chat(ctx context.Context, req Request) (Response, err
 		OutputTokens:    or.Usage.CompletionTokens,
 		ReasoningTokens: or.Usage.CompletionTokensDetails.ReasoningTokens,
 		Message:         Message{Role: "assistant"},
+
+		CacheReadTokens:  or.Usage.PromptTokensDetails.CachedTokens,
+		CacheWriteTokens: or.Usage.PromptTokensDetails.CacheWriteTokens,
 	}
 	if ch.Message.Content != nil {
 		out.Message.Content = *ch.Message.Content
+	}
+	out.Message.Reasoning = ch.Message.ReasoningContent
+	if out.Message.Reasoning == "" {
+		out.Message.Reasoning = ch.Message.ReasoningText
 	}
 	for _, tc := range ch.Message.ToolCalls {
 		out.Message.ToolCalls = append(out.Message.ToolCalls, ToolCall{

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -13,6 +15,24 @@ const systemPrompt = `You are a chess player. You will be shown the current posi
 Think briefly about threats against your pieces and your best candidate moves, then choose one legal move.
 End your reply with exactly one line of the form:
 MOVE: <move in standard algebraic notation, e.g. Nf3, exd5, O-O, e8=Q>`
+
+// PromptName is the gen_ai.prompt.name of the move prompt.
+const PromptName = "chess-move"
+
+// PromptVersion is the gen_ai.prompt.version of the move prompt: the first
+// 12 hex digits of the SHA-256 of its fixed parts (the system prompt, the
+// tool definitions and the user-prompt variant). It changes by itself
+// whenever the prompt does, so prompts can be compared as a feature without
+// anyone remembering to bump a number.
+func (a *Agent) PromptVersion() string {
+	h := sha256.New()
+	h.Write([]byte(systemPrompt))
+	fmt.Fprintf(h, "\nlegal_moves_in_prompt=%t tools=%t\n", a.cfg.LegalMovesInPrompt, a.cfg.Tools)
+	if a.cfg.Tools {
+		h.Write([]byte(llm.EncodeToolDefinitions(toolDefs)))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
 
 func (a *Agent) userPrompt(g *chess.Game) string {
 	pos := g.Position()
