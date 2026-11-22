@@ -29,7 +29,9 @@ func TestGradeIsAnEvaluationResultEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ag := agent.New(agent.Config{Model: "m"}, llm.Instrument(oneMove{"e4"}), 1)
+	// Tools on, so tool_calls is reported (as 0: the model calls none). An agent
+	// without tools reports no tool_calls point at all; see TestMetricToolCalls.
+	ag := agent.New(agent.Config{Model: "m", Tools: true}, llm.Instrument(oneMove{"e4"}), 1)
 	pm, err := p.decide(context.Background(), chess.NewGame(), ag, "scripted", "g-test", moveOpts{})
 	if err != nil {
 		t.Fatal(err)
