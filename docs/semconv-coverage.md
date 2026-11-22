@@ -23,26 +23,26 @@ new variable is unset, and means `SPAN_AND_EVENT`. An unknown value means
 |---|---|---|
 | `gen_ai.operation.name` | always | `chat` |
 | `gen_ai.conversation.id` | when the caller has one | the game id, carried in the context (`telemetry.WithConversationID`); also on the tool spans and every GenAI event, never on metrics |
-| `gen_ai.provider.name` | always | `openai`, `anthropic`, `ollama`, `mock`, ... |
+| `gen_ai.provider.name` | always | `openai`, `anthropic`, `ollama`, `mock`, ... `--provider openai-responses` (the Responses API) is also `openai`: the attribute names the provider, not the API |
 | `gen_ai.request.model` | always | |
 | `server.address`, `server.port` | remote clients | from the client's base URL; port defaults to 443/80 (`api.anthropic.com:443` for the Anthropic client) |
 | `gen_ai.request.temperature` | when sent | |
 | `gen_ai.request.max_tokens` | when sent | |
 | `gen_ai.request.top_p` | when sent | plumbed through `llm.Request`; the agent does not set it today |
-| `gen_ai.request.seed` | when sent | plumbed through; not set today |
-| `gen_ai.request.stop_sequences` | when sent | plumbed through; not set today |
-| `gen_ai.request.reasoning.level` | when sent | the request's level, or the client's default (set by the model presets in `cmd/gambit/models.go`, e.g. `none` for OpenAI GPT-6, or by `--effort`: for Anthropic it is `output_config.effort`) |
+| `gen_ai.request.seed` | when sent | plumbed through; not set today. The Responses API has no `seed`, so that client never sends it (nor `stop`), whatever `llm.Request` holds |
+| `gen_ai.request.stop_sequences` | when sent | plumbed through; not set today (see `seed`) |
+| `gen_ai.request.reasoning.level` | when sent | the request's level, or the client's default (set by the model presets in `cmd/gambit/models.go`, e.g. `none` for OpenAI GPT-6, or by `--effort`: for Anthropic it is `output_config.effort`, for OpenAI Responses `reasoning.effort`) |
 | `gen_ai.output.type` | when the request asks for a format | `json` sends `response_format: json_object`; plain text requests leave it unset |
 | `gen_ai.prompt.name`, `gen_ai.prompt.version` | always (agent and coach) | `chess-move` / `chess-coach`; the version is a hash of the prompt, see below |
-| `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons` | on success | the provider's own value: OpenAI `stop`/`length`/`tool_calls`; Anthropic `end_turn`/`tool_use`/`max_tokens`/`stop_sequence`/`refusal` |
+| `gen_ai.response.id`, `gen_ai.response.model`, `gen_ai.response.finish_reasons` | on success | the provider's own value: OpenAI `stop`/`length`/`tool_calls` (the Responses client maps its `status` to the same words: `incomplete` because of `max_output_tokens` is `length`, plus `content_filter`); Anthropic `end_turn`/`tool_use`/`max_tokens`/`stop_sequence`/`refusal` |
 | `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens` | on success | Anthropic's `input_tokens` leaves out cached tokens, so the client reports input + cache read + cache write, keeping the cache counts subsets of the input count |
-| `gen_ai.usage.reasoning.output_tokens` | when reported and > 0 | replaces `gambit.usage.reasoning_tokens`. OpenAI `completion_tokens_details.reasoning_tokens`; Anthropic `usage.output_tokens_details.thinking_tokens` (the raw reasoning, not the summary's length; absent from the response means unset here, never estimated) |
-| `gen_ai.usage.cache_read.input_tokens` | when reported and > 0 | OpenAI `prompt_tokens_details.cached_tokens`; Anthropic `cache_read_input_tokens` |
+| `gen_ai.usage.reasoning.output_tokens` | when reported and > 0 | replaces `gambit.usage.reasoning_tokens`. OpenAI `completion_tokens_details.reasoning_tokens` (Responses: `output_tokens_details.reasoning_tokens`); Anthropic `usage.output_tokens_details.thinking_tokens` (the raw reasoning, not the summary's length; absent from the response means unset here, never estimated) |
+| `gen_ai.usage.cache_read.input_tokens` | when reported and > 0 | OpenAI `prompt_tokens_details.cached_tokens` (Responses: `input_tokens_details.cached_tokens`); Anthropic `cache_read_input_tokens` |
 | `gen_ai.usage.cache_write.input_tokens` | when reported and > 0 | OpenAI does not report it; OpenRouter's `cache_write_tokens` and Anthropic's `cache_creation_input_tokens` do |
 | `error.type` | on failure | HTTP status, `timeout`, or `_OTHER` |
 | `gen_ai.system_instructions` | opt-in | the leading system message(s), as `[{"type":"text","content":...}]` (see "Judgment calls") |
 | `gen_ai.input.messages` | opt-in | the rest of the chat, in the parts format |
-| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning` on Chat Completions; the summarized `thinking` blocks of the Anthropic Messages API). Messages carry no `finish_reason` (deprecated in v0.1.0; it is in `gen_ai.response.finish_reasons`) |
+| `gen_ai.output.messages` | opt-in | includes a `reasoning` part when the server returns visible reasoning (`reasoning_content` / `reasoning` on Chat Completions; the summarized `thinking` blocks of the Anthropic Messages API; the summary text of the OpenAI Responses API's `reasoning` items, which Chat Completions never returns). Messages carry no `finish_reason` (deprecated in v0.1.0; it is in `gen_ai.response.finish_reasons`) |
 | `gen_ai.tool.definitions` | opt-in | `[{"type":"function","name":...,"description":...,"parameters":...}]` |
 
 Not emitted, on purpose:
@@ -176,6 +176,19 @@ arguments and result as structured values, not JSON strings.
   move is played. Its evaluation is still emitted (it is still a graded move
   in the game), but without `gen_ai.response.id` and with `chess.fallback=true`,
   so model-quality views can leave it out.
+- **OpenAI reasoning, two APIs.** Chat Completions gives only a
+  reasoning-token count, so its spans have `gen_ai.usage.reasoning.output_tokens`
+  and no `reasoning` part. `--provider openai-responses` calls the Responses
+  API, which also returns a summary of the reasoning (`reasoning.summary:
+  auto`), so the same model gets both. Neither API returns the raw chain of
+  thought: the `reasoning` part is a summary. The span name and
+  `gen_ai.provider.name` (`openai`) are the same for both, because the
+  conventions name the provider, not the API; nothing on the span says which
+  API was called.
+- **Replayed reasoning.** The Responses client is stateless (`store: false`)
+  and sends the previous turn's reasoning items back, encrypted, as the API
+  requires. They are opaque, so `gen_ai.input.messages` shows the earlier
+  assistant turn with its readable summary, not the encrypted items.
 
 ## Gaps: what the conventions do not cover
 

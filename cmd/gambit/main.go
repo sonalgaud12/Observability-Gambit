@@ -108,7 +108,7 @@ func registerModelFlags(fs *flag.FlagSet, modelFlag string) *modelFlags {
 	return &modelFlags{
 		mock:          fs.Bool("mock", false, "use the offline mock model (rehearsal only: its correlations are synthetic)"),
 		baseURL:       fs.String("base-url", envOr("GAMBIT_BASE_URL", ""), "API base URL (default: https://api.openai.com/v1, or https://api.anthropic.com for --provider anthropic; Ollama: http://localhost:11434/v1)"),
-		provider:      fs.String("provider", envOr("GAMBIT_PROVIDER", "openai"), "gen_ai.provider.name for spans; \"anthropic\" also selects the native Anthropic Messages API (shows Claude's thinking summary) instead of the OpenAI-compatible client"),
+		provider:      fs.String("provider", envOr("GAMBIT_PROVIDER", "openai"), "gen_ai.provider.name for spans; \"anthropic\" also selects the native Anthropic Messages API (shows Claude's thinking summary), and \"openai-responses\" OpenAI's Responses API (shows the model's reasoning summary; spans say provider openai), instead of the OpenAI-compatible Chat Completions client"),
 		model:         fs.String(modelFlag, envOr("GAMBIT_MODEL", "gpt-4o-mini"), "model name"),
 		temperature:   fs.Float64("temperature", 0.7, "sampling temperature (negative = provider default)"),
 		maxTokens:     fs.Int("max-tokens", 1024, "max output tokens per call"),
@@ -121,24 +121,26 @@ func registerModelFlags(fs *flag.FlagSet, modelFlag string) *modelFlags {
 		seed:          fs.Int64("seed", time.Now().UnixNano(), "random seed"),
 		mockBrain:     fs.Int("mock-brain-skill", 6, "mock only: Stockfish Skill Level (0-20) the mock follows while calm; -1 = none"),
 		keepReasoning: fs.Bool("keep-reasoning", true, "store the model's final answer text in the dataset (shown in the UI)"),
-		effort:        fs.String("effort", envOr("GAMBIT_EFFORT", ""), "reasoning effort: low, medium, high, xhigh or max (anthropic: output_config.effort; \"\" = the model's default, medium on Claude Haiku 5.5)"),
-		llmTimeout:    fs.Duration("llm-timeout", 0, "HTTP timeout for one model call, thinking included (0 = 10m for --provider anthropic, 3m otherwise)"),
+		effort:        fs.String("effort", envOr("GAMBIT_EFFORT", ""), "reasoning effort: low, medium, high, xhigh or max (anthropic: output_config.effort; \"\" = the model's default, medium on Claude Haiku 5.5); openai-responses: none, minimal, low, medium, high or xhigh (reasoning.effort)"),
+		llmTimeout:    fs.Duration("llm-timeout", 0, "HTTP timeout for one model call, thinking included (0 = 10m for --provider anthropic and openai-responses, 3m otherwise)"),
 	}
 }
 
 // finish applies defaults that depend on which flags the user actually set.
 // Call it after fs.Parse.
 func (m *modelFlags) finish(fs *flag.FlagSet) {
-	set := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "temperature" {
-			set = true
-		}
-	})
-	// Claude 5 models reject a non-default temperature, so the 0.7 default is
-	// wrong for them: leave it to the provider unless the user chose one.
-	if !set && m.native() {
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	// Claude 5 models and OpenAI's reasoning models reject a non-default
+	// temperature, so the 0.7 default is wrong for them: leave it to the
+	// provider unless the user chose one.
+	if !set["temperature"] && (m.native() || m.responses()) {
 		*m.temperature = -1
+	}
+	// OpenAI's output cap includes the reasoning tokens, so the 1024 default
+	// would end moves as "length" before the model answers.
+	if !set["max-tokens"] && m.responses() {
+		*m.maxTokens = 4096
 	}
 }
 
@@ -153,7 +155,7 @@ func (m *modelFlags) moveTimeout(flagValue string, ids []string) (time.Duration,
 		}
 		return d, nil
 	}
-	claude := m.native()
+	claude := m.native() || m.responses() // models that reason before they answer
 	for _, id := range ids {
 		if presets[id].Provider == "anthropic" {
 			claude = true
@@ -194,10 +196,22 @@ func autoMoveTimeout(claude bool, effort string) time.Duration {
 // Messages API rather than an OpenAI-compatible endpoint.
 func (m *modelFlags) native() bool { return !*m.mock && *m.provider == "anthropic" }
 
+// responses reports whether the model is called through OpenAI's Responses API
+// rather than Chat Completions.
+func (m *modelFlags) responses() bool { return !*m.mock && *m.provider == "openai-responses" }
+
 // newClient builds the (uninstrumented) client for the chosen provider.
 func newClient(provider, baseURL, apiKey, effort string, timeout time.Duration) llm.Client {
 	if provider == "anthropic" {
 		c := llm.NewAnthropic(baseURL, apiKey)
+		c.Effort = effort
+		if timeout > 0 {
+			c.SetTimeout(timeout)
+		}
+		return c
+	}
+	if provider == "openai-responses" {
+		c := llm.NewOpenAIResponses(baseURL, apiKey)
 		c.Effort = effort
 		if timeout > 0 {
 			c.SetTimeout(timeout)

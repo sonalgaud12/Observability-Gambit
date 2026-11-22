@@ -17,9 +17,10 @@ type Message struct {
 	// server returns it (reasoning_content / reasoning). Never sent back.
 	Reasoning string `json:"-"`
 	// ProviderContent is an assistant turn's content exactly as the provider
-	// returned it. The Anthropic client sends it back unchanged on the next
-	// request, which is how thinking blocks (and their signatures) survive a
-	// tool round trip or a retry. Never sent by other clients.
+	// returned it. The Anthropic client (content blocks) and the OpenAI
+	// Responses client (output items) send it back unchanged on the next
+	// request, which is how thinking blocks and reasoning items survive a tool
+	// round trip or a retry. Never sent by other clients.
 	ProviderContent json.RawMessage `json:"-"`
 }
 
