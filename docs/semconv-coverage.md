@@ -88,7 +88,7 @@ conversation id, no content.
 | `gen_ai.client.inference.usage.cache_read.input_tokens` / `.cache_write.input_tokens` | counter, {token} | | + `gen_ai.token.modality=text` |
 | `gen_ai.client.inference.usage.reasoning.output_tokens` | counter, {token} | | no modality (the spec has none on this one) |
 | `gen_ai.invoke_agent.duration` | histogram, s | 0.1 … 86400 | operation, agent name, request model, `error.type` |
-| `gen_ai.invoke_agent.inference_calls` / `.tool_calls` | histogram | 1 … 128 | operation, agent name. The coach cannot call tools, so it reports no `tool_calls` |
+| `gen_ai.invoke_agent.inference_calls` / `.tool_calls` | histogram | 1 … 128 | operation, agent name. An agent that cannot call tools (the coach, or the chess agent with `-tools=false`) reports no `tool_calls` |
 | `gen_ai.execute_tool.duration` | histogram, s | 0.01 … 81.92 | operation, tool name/type, agent name, `error.type` |
 
 Not emitted, on purpose:

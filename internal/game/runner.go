@@ -371,7 +371,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 		span.SetStatus(codes.Error, err.Error())
 		span.SetAttributes(sc.ErrorType.String("_OTHER"))
 		p.genai.Exception(actx, sc.EventInvokeAgentException, fmt.Sprintf("%T", err), err)
-		p.genai.AgentDone(actx, agent.Name, model, "_OTHER", latency, st.ChatCalls, st.ToolCalls)
+		p.genai.AgentDone(actx, agent.Name, model, "_OTHER", latency, st.ChatCalls, ag.MetricToolCalls(st))
 		span.End()
 		root.End()
 		return nil, err
@@ -395,7 +395,7 @@ func (p *player) decide(ctx context.Context, g *chess.Game, ag *agent.Agent, pro
 	case st.Fallback:
 		errType = "fallback_move"
 	}
-	p.genai.AgentDone(actx, agent.Name, model, errType, latency, st.ChatCalls, st.ToolCalls)
+	p.genai.AgentDone(actx, agent.Name, model, errType, latency, st.ChatCalls, ag.MetricToolCalls(st))
 	agentSpan := span.SpanContext()
 	span.End()
 

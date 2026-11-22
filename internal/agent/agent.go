@@ -361,6 +361,16 @@ func (s Stats) Attrs() []attribute.KeyValue {
 }
 
 // SpanAttrs are the invoke_agent span attributes known before the decision
+// MetricToolCalls is the gen_ai.invoke_agent.tool_calls value to report for
+// st. An agent configured without tools cannot call any, so it reports
+// telemetry.NoToolCalls (no data point) rather than 0, as the conventions ask.
+func (a *Agent) MetricToolCalls(st Stats) int {
+	if !a.cfg.Tools {
+		return telemetry.NoToolCalls
+	}
+	return st.ToolCalls
+}
+
 // starts: who the agent is and how it calls the model.
 func (a *Agent) SpanAttrs() []attribute.KeyValue {
 	attrs := []attribute.KeyValue{

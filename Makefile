@@ -20,7 +20,12 @@ STOCKFISH  ?= stockfish
 GAME       ?=
 LIVE_ARGS  ?=
 
+# Content capture defaults to SPAN_AND_EVENT, unless the caller set the legacy
+# boolean variable: then Capture() falls back to it, so
+# OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=false still turns it off.
+ifeq ($(origin OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT),undefined)
 export OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT ?= SPAN_AND_EVENT
+endif
 export STOCKFISH_PATH ?= $(STOCKFISH)
 
 .PHONY: build test up up-cloud up-prod down logs rehearse play analyze serve live live-mock replay sql clean

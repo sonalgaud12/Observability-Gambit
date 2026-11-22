@@ -454,8 +454,9 @@ Standard OTel environment variables apply: `OTEL_EXPORTER_OTLP_ENDPOINT`
 takes the values the GenAI conventions define: `NO_CONTENT` (the default),
 `SPAN_ONLY`, `EVENT_ONLY` or `SPAN_AND_EVENT`. The Makefile and the Compose
 files default to `SPAN_AND_EVENT`. The older
-`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true` is still read when the
-new variable is not set, and means `SPAN_AND_EVENT`.
+`OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT` is still read when the new
+variable is not set: `true` means `SPAN_AND_EVENT`, and `false` still turns
+capture off under `make` and Compose. If both are set, the new one wins.
 
 Traces, metrics and logs all go to the same OTLP endpoint. To send traces only
 (for a Collector without metrics or logs pipelines), set

@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/sonalgaud12/observability-gambit/internal/llm"
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 )
 
 func TestExtractAndParseMove(t *testing.T) {
@@ -193,5 +194,20 @@ func TestParseMoveIsExported(t *testing.T) {
 	}
 	if ParseMove(pos, "e2e5") != nil {
 		t.Error("illegal move parsed")
+	}
+}
+
+// Without tools the agent cannot call any, so it reports no tool_calls point;
+// with tools it reports the count, including 0.
+func TestMetricToolCalls(t *testing.T) {
+	st := Stats{ToolCalls: 0}
+	if got := New(Config{Model: "m", Tools: false}, nil, 1).MetricToolCalls(st); got != telemetry.NoToolCalls {
+		t.Errorf("no tools: got %d, want NoToolCalls", got)
+	}
+	if got := New(Config{Model: "m", Tools: true}, nil, 1).MetricToolCalls(st); got != 0 {
+		t.Errorf("tools, none called: got %d, want 0", got)
+	}
+	if got := New(Config{Model: "m", Tools: true}, nil, 1).MetricToolCalls(Stats{ToolCalls: 2}); got != 2 {
+		t.Errorf("tools, two called: got %d, want 2", got)
 	}
 }
