@@ -19,10 +19,9 @@ Everything is Go, and everything runs locally.
                        ┌────────▼─────────┐
                        │  OTel Collector  │
                        └─┬──────┬──────┬──┘
-     traces/all ─────────┘      │      └──────── traces/sampled
-     ClickHouse + OTLP-JSON     │                tail_sampling ─▶ Tempo
-     (SQL correlation, replay)  │                (blunders, retries, errors,
-                                │                 slow decisions, 10% baseline)
+     traces/all ─────────┘      │
+     ClickHouse + OTLP-JSON + Tempo (every trace)
+     (SQL correlation, replay)  │
                      spanmetrics ─▶ Prometheus (exemplars ─▶ Tempo)
                                 │
                              Grafana
@@ -45,8 +44,8 @@ chess.move                         root: chess.* context + the label
 ```
 
 Grading is a **sibling** of the decision, not a child, so decision latency never
-includes engine time. The label lives on the root span, so the Collector's tail
-sampler can keep every blunder.
+includes engine time. The label lives on the root span, so a trace can be
+found by its grade (`chess.move.class`) in Tempo or ClickHouse.
 
 Alongside the traces, the SDK sends the GenAI convention **metrics**
 (`gen_ai.client.inference.*`, `gen_ai.invoke_agent.*`,
@@ -180,9 +179,7 @@ ground-truth label to the trace, then join it back to the trace's own telemetry.
 2. In the UI, games are sorted by their worst blunder. Pick the one with the best
    story (ideally a hanging queen with risk climbing in the moves before it).
 3. `make replay GAME=<id>` so that game's traces are fresh in Tempo, and check
-   that the UI's "Open trace" links resolve. A replay goes through tail sampling
-   again, so only the interesting moves (blunders, mistakes, retries, errors) and
-   about 10% of the rest are kept: a link on a sampled-out move reads "not found".
+   that the UI's "Open trace" links resolve.
 4. Record a screen capture of the whole flow as a fallback.
 
 **On stage** (no live LLM calls, no Wi-Fi dependency)
@@ -226,7 +223,7 @@ model is `--agent-model` here because `--model` is the analysis bundle.
 | `--live` | off | Turn human mode on. Without it, `serve` is the replay UI only. |
 | `--move-timeout` | 15s | Hard cap on one agent move, retries and tool calls included. `0` = no cap. |
 | `--script` | none | Scripted opening: the human's moves, e.g. `"e4 Nf3 Bc4"`. Editable in the UI. |
-| `--trace-delay` | 20s | How long after a move is graded its "Open trace" link is offered (see below). |
+| `--trace-delay` | 5s | How long after a move is graded its "Open trace" link is offered (see below). |
 | `--grader-depth` | 14 | Same label as batch games. |
 
 For a shared deployment (see [`deploy/gcp/README.md`](deploy/gcp/README.md)) there are more
@@ -290,7 +287,7 @@ An agent move in a human game is traced exactly like one in a batch game (same
 spans, same attributes, graded by the same second Stockfish), with these extras:
 
 - `gambit.run.mode=human` and `chess.opponent.type=human` on the root span (the
-  mode is also on `invoke_agent`, so the tail sampler can see it early). Batch games
+  mode is also on `invoke_agent`, so it is on the span early). Batch games
   carry neither.
 - `data/moves.jsonl` and `data/games.jsonl` rows with `"mode":"human"`, and
   `"timed_out":true` on a move cut off by the timeout. The game id starts with `h`.
@@ -327,7 +324,7 @@ The person's own moves are graded too, so a beginner learns while they play:
   move), with `chess.player.type=human`, `gambit.run.mode=human`, and the grade in
   `chess.human.move.class`, `chess.human.eval.*`. It has no `gen_ai.*` attributes
   and no `chess.move.class`, so dashboards built on the agent's attributes ignore
-  it; the tail sampler keeps it with the other human-game traces.
+  it; it is in Tempo like every other trace.
 
 ### The coach
 
@@ -360,24 +357,19 @@ in plain words, in addition to the grade and the rule-based reason above.
 
 ### Trace links and the Collector
 
-The Collector's tail sampler holds a trace for `decision_wait` (15s) before
-Tempo gets it, so a trace is not there the instant the move lands. The link
-therefore appears `--trace-delay` (20s) after the grade, with a countdown. These
-things keep it honest:
+The Collector batches spans (2s) before Tempo gets them, so a trace is not there the
+instant the move lands. The link therefore appears `--trace-delay` (5s) after the grade,
+with a countdown. These things keep it honest:
 
-- A `keep-human-games` policy keeps every human trace, instead of the 10% baseline.
-- The sampler decides `decision_wait` after a trace's first span arrives, so a move
-  whose spans straggle in later than that (a long chain of retries, a raised
-  `--move-timeout`) can reach Tempo incomplete or not at all. The default 15s cap
-  fits; if you raise it, raise `decision_wait` in `collector/otel-collector.yaml` too.
+- **Every trace goes to Tempo** (the `traces/all` pipeline), not a sample, so every
+  move's link resolves, good moves included. An earlier design kept only blunders,
+  retries, errors and a 10% baseline in the trace UI, which made most links read
+  "trace not found". (Grafana Cloud was always unsampled.)
 - The default `--trace-url` opens the trace in Grafana Explore on the Tempo datasource,
   over the last 30 days (Tempo only searches blocks inside the query's time range, so
-  Explore's default one-hour range makes an older trace read "not found"). Tempo is
-  fed by the sampled pipeline, so the delay still applies; pass `--trace-delay 0`
-  only for a `--trace-url` that reads a backend without tail sampling (Grafana Cloud's
-  traces are unsampled).
+  Explore's default one-hour range makes an older trace read "not found").
 - Tempo stores traces on the `tempo` named volume, so they survive `make down` and
-  restarts (`docker compose down -v` deletes them).
+  restarts (`docker compose down -v` deletes them; blocks are kept 30 days).
 
 ### API
 

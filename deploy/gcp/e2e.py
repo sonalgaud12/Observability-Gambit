@@ -123,7 +123,7 @@ def main():
     time.sleep(2)
     games["nic"] = play_one("nic", "haiku-5.5", "nic")
 
-    print("-- waiting for the Collector's tail sampling window, then Tempo --", flush=True)
+    print("-- waiting for the Collector's batch, then Tempo --", flush=True)
     for user, want_model in (("sonal", "mock-gpt-6-luna"), ("nic", "mock-claude-haiku-5-5")):
         gid, traces = games[user]
         tr = tempo_trace(user, traces[0])

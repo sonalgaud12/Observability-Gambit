@@ -267,7 +267,7 @@ func serve(args []string) error {
 	live := fs.Bool("live", false, "human mode: play the agent from the stage UI (needs Stockfish and a model; see the model flags)")
 	moveTimeout := fs.Duration("move-timeout", 15*time.Second, "live: hard cap on one agent move; on timeout a random legal move is played and flagged (0 = none)")
 	script := fs.String("script", "", "live: scripted opening, the human's moves separated by spaces or commas, e.g. \"e4 Nf3 Bc4\"")
-	traceDelay := fs.Duration("trace-delay", 20*time.Second, "live: wait this long after a move is graded before offering its trace link (the Collector's tail sampling holds traces back about 15s before Tempo gets them; use 0 only when --trace-url points at a backend without tail sampling)")
+	traceDelay := fs.Duration("trace-delay", 5*time.Second, "live: wait this long after a move is graded before offering its trace link (the Collector batches spans for ~2s before Tempo gets them; 0 = offer it at once)")
 	// These only matter with --live. `serve --model` is the analysis bundle,
 	// so the live agent's model is --agent-model.
 	m := registerModelFlags(fs, "agent-model")

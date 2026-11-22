@@ -182,8 +182,8 @@ gcloud compute ssh og-play --project="$PROJECT" --zone="$ZONE" --tunnel-through-
 Caveats worth knowing: Tempo keeps traces on the `tempo` named volume, so trace links survive restarts and
 redeploys (`docker compose down -v` deletes the volume; a plain `down` does not).
 The links open the trace in Grafana Explore at `dash.<domain>` with a 30-day range,
-so the passcode that opens the game opens the trace. A trace link appears about 20 s after a move is graded (the Collector's tail
-sampling window). Prompt capture is on, so players' moves and the model's replies are stored on the VM
+so the passcode that opens the game opens the trace. Every trace goes to Tempo (no sampling; the volume is a few hundred spans per game, well inside the
+VM's disk at the 150-games-a-day cap), and a trace link appears about 5 s after a move is graded. Prompt capture is on, so players' moves and the model's replies are stored on the VM
 and in Grafana Cloud: tell players.
 
 ## Test it on your laptop first

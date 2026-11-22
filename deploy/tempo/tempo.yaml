@@ -1,6 +1,6 @@
 # Grafana Tempo, single binary, local disk (the "tempo" named volume), so
 # traces survive `docker compose restart`/`down`. OTLP in from the Collector's
-# traces/sampled pipeline only; Grafana reads it on :3200.
+# traces/all pipeline (every trace, unsampled); Grafana reads it on :3200.
 stream_over_http_enabled: true
 
 server:

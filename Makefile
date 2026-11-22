@@ -95,7 +95,7 @@ replay: build
 		cp data/traces/traces.jsonl data/replay/all.jsonl; \
 	fi
 	docker compose --profile replay up -d replay
-	@echo "Replaying into the Collector; traces appear in Tempo after the tail-sampling wait (~15s)."
+	@echo "Replaying into the Collector; traces appear in Tempo within a few seconds."
 
 sql:
 	docker compose exec -T clickhouse clickhouse-client --multiquery --format PrettyCompact < sql/correlation.sql
