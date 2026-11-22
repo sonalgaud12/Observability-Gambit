@@ -50,8 +50,8 @@ service:
       exporters: [otlphttp/grafana]
     # The gen_ai.* convention metrics, and the gen_ai.* events as logs. The
     # gen_ai.client.inference.operation.details event carries the prompt and
-    # answer (with content capture on), so they reach Loki even though Cloud
-    # traces strip them.
+    # answer (when content goes to events), so they are expected to reach Loki
+    # even though Cloud traces strip them (not yet verified against a real stack).
     metrics/cloud:
       receivers: [otlp]
       processors: [memory_limiter, resource/cloud, batch]

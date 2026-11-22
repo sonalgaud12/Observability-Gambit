@@ -65,8 +65,15 @@ func TestGradeIsAnEvaluationResultEvent(t *testing.T) {
 	}
 
 	a := rec.SpanAttrs("invoke_agent " + agent.Name)[0]
-	if a["gen_ai.agent.version"].AsString() != agent.Version || a["gen_ai.agent.description"].AsString() != agent.Description {
+	if a["gambit.agent.version"].AsString() != agent.Version || a["gen_ai.agent.description"].AsString() != agent.Description {
 		t.Errorf("invoke_agent span lacks version/description: %v", a)
+	}
+	// Removed from the invoke_agent span in v0.1.0; the version is under gambit.*.
+	if _, ok := a["gen_ai.agent.version"]; ok {
+		t.Errorf("invoke_agent span still has gen_ai.agent.version")
+	}
+	if e.Attrs["gen_ai.conversation.id"].AsString() != "g-test" {
+		t.Errorf("evaluation event lacks the conversation id: %v", e.Attrs)
 	}
 	if a["gen_ai.usage.input_tokens"].AsInt64() != 50 {
 		t.Errorf("invoke_agent token total = %v", a["gen_ai.usage.input_tokens"].AsInterface())

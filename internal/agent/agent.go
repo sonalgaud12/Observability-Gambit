@@ -30,7 +30,8 @@ const Name = "chess-agent"
 // Description is the gen_ai.agent.description value.
 const Description = "Plays one side of a chess game: reads the position, may call the legal_moves and threats tools, and answers with one move in SAN."
 
-// Version is the gen_ai.agent.version value: the demo's release.
+// Version is the agent's release, recorded as gambit.agent.version.
+// gen_ai.agent.version was removed from the invoke_agent span in v0.1.0.
 const Version = telemetry.Version
 
 // Config controls how the agent plays.
@@ -217,7 +218,10 @@ func (a *Agent) runTool(ctx context.Context, tc llm.ToolCall, pos *chess.Positio
 	if d := toolDescription(tc.Name); d != "" {
 		attrs = append(attrs, sc.GenAIToolDescription.String(d))
 	}
-	capture := telemetry.CaptureContent()
+	if id := telemetry.ConversationID(ctx); id != "" {
+		attrs = append(attrs, sc.GenAIConversationID.String(id))
+	}
+	capture := telemetry.Capture().OnSpans()
 	if capture {
 		attrs = append(attrs, sc.GenAIToolCallArguments.String(tc.Arguments))
 	}
@@ -357,10 +361,20 @@ func (s Stats) Attrs() []attribute.KeyValue {
 }
 
 // SpanAttrs are the invoke_agent span attributes known before the decision
+// MetricToolCalls is the gen_ai.invoke_agent.tool_calls value to report for
+// st. An agent configured without tools cannot call any, so it reports
+// telemetry.NoToolCalls (no data point) rather than 0, as the conventions ask.
+func (a *Agent) MetricToolCalls(st Stats) int {
+	if !a.cfg.Tools {
+		return telemetry.NoToolCalls
+	}
+	return st.ToolCalls
+}
+
 // starts: who the agent is and how it calls the model.
 func (a *Agent) SpanAttrs() []attribute.KeyValue {
 	attrs := []attribute.KeyValue{
-		sc.GenAIAgentVersion.String(Version),
+		sc.GambitAgentVersion.String(Version),
 		sc.GenAIAgentDescription.String(Description),
 	}
 	if a.cfg.Temperature >= 0 {

@@ -370,7 +370,7 @@ func TestCoachIsTracedAsItsOwnAgent(t *testing.T) {
 	for _, sp := range recorder.Ended()[seen:] {
 		a := attrs(sp)
 		if a["gen_ai.conversation.id"] != s.ID {
-			// chat spans carry no conversation id: find them through their trace below
+			// (chat spans of the coach are found through their trace below)
 			continue
 		}
 		switch {
@@ -391,6 +391,9 @@ func TestCoachIsTracedAsItsOwnAgent(t *testing.T) {
 			ti.root = sp
 		case strings.HasPrefix(sp.Name(), "chat "):
 			ti.chat = sp
+			if attrs(sp)["gen_ai.conversation.id"] != s.ID {
+				t.Errorf("coach chat span lacks the conversation id: %v", attrs(sp))
+			}
 		}
 	}
 	if playerAgents == 0 || coachAgents != 2 || len(coachTraces) != 2 {

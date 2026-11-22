@@ -54,17 +54,24 @@ func (i *Instrumented) Chat(ctx context.Context, req Request) (Response, error) 
 
 	attrs := append([]attribute.KeyValue{}, base...)
 	attrs = append(attrs, requestAttrs(req, i.Inner)...)
+	// The game id, when the caller put one in ctx. Not on the metrics: an id
+	// per game would be unbounded cardinality there.
+	if id := telemetry.ConversationID(ctx); id != "" {
+		attrs = append(attrs, sc.GenAIConversationID.String(id))
+	}
 
 	start := time.Now()
 	ctx, span := i.tracer.Start(ctx, sc.OpChat+" "+req.Model,
 		trace.WithSpanKind(trace.SpanKindClient), trace.WithAttributes(attrs...))
 	defer span.End()
 
-	capture := telemetry.CaptureContent()
-	var content []attribute.KeyValue
-	if capture {
+	capture := telemetry.Capture()
+	var content []contentDoc
+	if capture != telemetry.NoContent {
 		content = inputContent(req)
-		span.SetAttributes(content...)
+	}
+	if capture.OnSpans() {
+		span.SetAttributes(spanContent(content)...)
 	}
 
 	resp, err := i.Inner.Chat(ctx, req)
@@ -80,10 +87,11 @@ func (i *Instrumented) Chat(ctx context.Context, req Request) (Response, error) 
 
 	respAttrs := responseAttrs(resp)
 	span.SetAttributes(respAttrs...)
-	if capture {
-		out := sc.GenAIOutputMessages.String(encodeOutput(resp))
-		span.SetAttributes(out)
-		content = append(content, out)
+	if capture != telemetry.NoContent {
+		content = append(content, contentDoc{sc.GenAIOutputMessages, encodeOutput(resp)})
+	}
+	if capture.OnSpans() {
+		span.SetAttributes(sc.GenAIOutputMessages.String(content[len(content)-1].json))
 	}
 
 	mbase := base
@@ -95,12 +103,13 @@ func (i *Instrumented) Chat(ctx context.Context, req Request) (Response, error) 
 		CacheRead: resp.CacheReadTokens, CacheWrite: resp.CacheWriteTokens,
 		Reasoning: resp.ReasoningTokens,
 	})
-	if capture {
+	if capture.OnEvents() {
 		// The same call as a log event, for backends that keep logs but
-		// strip content from stored spans (Grafana Cloud does). Only with
-		// content capture on: without content it would just repeat the span.
-		ev := append(append(append([]attribute.KeyValue{}, attrs...), respAttrs...), content...)
-		i.genai.Event(ctx, sc.EventInferenceDetails, log.SeverityDebug, ev...)
+		// strip content from stored spans (Grafana Cloud does). Only when
+		// content goes to events: without content it would just repeat the
+		// span. The content is structured (maps and slices), not JSON text.
+		ev := append(append([]attribute.KeyValue{}, attrs...), respAttrs...)
+		i.genai.EventStructured(ctx, sc.EventInferenceDetails, log.SeverityDebug, ev, eventContent(content))
 	}
 	return resp, nil
 }
@@ -170,6 +179,34 @@ func responseAttrs(resp Response) []attribute.KeyValue {
 	return a
 }
 
+// contentDoc is one piece of opt-in content: the attribute it is recorded
+// under and its value as a JSON document.
+//
+// On events the document becomes a structured value, as v0.1.0 requires. On
+// spans it stays a JSON string: the Go OpenTelemetry SDK's span attributes
+// (go.opentelemetry.io/otel/attribute, v1.35.0 in go.mod) hold only scalars and
+// slices of scalars, never maps or nested lists. See docs/semconv-coverage.md.
+type contentDoc struct {
+	key  attribute.Key
+	json string
+}
+
+func spanContent(docs []contentDoc) []attribute.KeyValue {
+	out := make([]attribute.KeyValue, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, d.key.String(d.json))
+	}
+	return out
+}
+
+func eventContent(docs []contentDoc) []log.KeyValue {
+	out := make([]log.KeyValue, 0, len(docs))
+	for _, d := range docs {
+		out = append(out, log.KeyValue{Key: string(d.key), Value: telemetry.StructuredValue(d.json)})
+	}
+	return out
+}
+
 // inputContent is the opt-in content of a request: the system prompt as
 // gen_ai.system_instructions, the rest of the chat as gen_ai.input.messages,
 // and the tools offered as gen_ai.tool.definitions.
@@ -180,20 +217,20 @@ func responseAttrs(resp Response) []attribute.KeyValue {
 // in the history. We split the leading system messages anyway, because the
 // template is fixed per prompt version and reading it apart from the moves is
 // what makes the prompt comparable. See docs/semconv-coverage.md.
-func inputContent(req Request) []attribute.KeyValue {
+func inputContent(req Request) []contentDoc {
 	var system []string
 	rest := req.Messages
 	for len(rest) > 0 && rest[0].Role == "system" {
 		system = append(system, rest[0].Content)
 		rest = rest[1:]
 	}
-	var a []attribute.KeyValue
+	var a []contentDoc
 	if len(system) > 0 {
-		a = append(a, sc.GenAISystemInstructions.String(encodeInstructions(system)))
+		a = append(a, contentDoc{sc.GenAISystemInstructions, encodeInstructions(system)})
 	}
-	a = append(a, sc.GenAIInputMessages.String(encodeMessages(rest)))
+	a = append(a, contentDoc{sc.GenAIInputMessages, encodeMessages(rest)})
 	if len(req.Tools) > 0 {
-		a = append(a, sc.GenAIToolDefinitions.String(EncodeToolDefinitions(req.Tools)))
+		a = append(a, contentDoc{sc.GenAIToolDefinitions, EncodeToolDefinitions(req.Tools)})
 	}
 	return a
 }
@@ -227,9 +264,8 @@ type part struct {
 }
 
 type encMsg struct {
-	Role         string `json:"role"`
-	Parts        []part `json:"parts"`
-	FinishReason string `json:"finish_reason,omitempty"`
+	Role  string `json:"role"`
+	Parts []part `json:"parts"`
 }
 
 func toEnc(m Message) encMsg {
@@ -265,9 +301,9 @@ func encodeMessages(ms []Message) string {
 }
 
 func encodeOutput(r Response) string {
-	e := toEnc(r.Message)
-	e.FinishReason = r.FinishReason
-	b, _ := json.Marshal([]encMsg{e})
+	// No finish_reason in the message: v0.1.0 deprecated it in favour of the
+	// gen_ai.response.finish_reasons attribute.
+	b, _ := json.Marshal([]encMsg{toEnc(r.Message)})
 	return string(b)
 }
 

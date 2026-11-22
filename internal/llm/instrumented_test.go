@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"github.com/sonalgaud12/observability-gambit/internal/telemetry"
 	"github.com/sonalgaud12/observability-gambit/internal/telemetry/telemetrytest"
 )
 
@@ -54,7 +55,7 @@ func testResponse() Response {
 
 func TestInferenceSpanFollowsTheConventions(t *testing.T) {
 	rec := telemetrytest.Install(t)
-	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "false")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", "NO_CONTENT")
 	c := Instrument(&fakeClient{resp: testResponse()})
 	if _, err := c.Chat(context.Background(), testRequest()); err != nil {
 		t.Fatal(err)
@@ -113,9 +114,9 @@ func TestInferenceSpanFollowsTheConventions(t *testing.T) {
 
 func TestInferenceContentCapture(t *testing.T) {
 	rec := telemetrytest.Install(t)
-	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", "true")
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", "SPAN_AND_EVENT")
 	c := Instrument(&fakeClient{resp: testResponse()})
-	if _, err := c.Chat(context.Background(), testRequest()); err != nil {
+	if _, err := c.Chat(telemetry.WithConversationID(context.Background(), "game-7"), testRequest()); err != nil {
 		t.Fatal(err)
 	}
 	a := rec.SpanAttrs("chat m")[0]
@@ -153,8 +154,41 @@ func TestInferenceContentCapture(t *testing.T) {
 	if ev[0].Severity != log.SeverityDebug || ev[0].SpanID != span.SpanID() || ev[0].TraceID != span.TraceID() {
 		t.Errorf("details event: severity %v, span %s (want DEBUG, %s)", ev[0].Severity, ev[0].SpanID, span.SpanID())
 	}
-	if !strings.Contains(ev[0].Attrs["gen_ai.output.messages"].AsString(), "MOVE: e4") {
-		t.Errorf("details event lacks the answer")
+	// Events carry structured values (a list of messages), not JSON text.
+	outMsgs := ev[0].Attrs["gen_ai.output.messages"]
+	if outMsgs.Kind() != log.KindSlice || len(outMsgs.AsSlice()) != 1 {
+		t.Fatalf("event output.messages should be a list, got %v", outMsgs)
+	}
+	msg := outMsgs.AsSlice()[0].AsMap()
+	var role string
+	var parts []log.Value
+	for _, kv := range msg {
+		switch kv.Key {
+		case "role":
+			role = kv.Value.AsString()
+		case "parts":
+			parts = kv.Value.AsSlice()
+		case "finish_reason":
+			t.Errorf("output message still carries the deprecated finish_reason")
+		}
+	}
+	if role != "assistant" || len(parts) != 2 {
+		t.Errorf("event output message = role %q, %d parts", role, len(parts))
+	}
+	if ev[0].Attrs["gen_ai.input.messages"].Kind() != log.KindSlice ||
+		ev[0].Attrs["gen_ai.system_instructions"].Kind() != log.KindSlice ||
+		ev[0].Attrs["gen_ai.tool.definitions"].Kind() != log.KindSlice {
+		t.Errorf("event content should be structured: %v", ev[0].Attrs)
+	}
+	if ev[0].Attrs["gen_ai.conversation.id"].AsString() != "game-7" {
+		t.Errorf("details event lacks the conversation id")
+	}
+	if got := a["gen_ai.conversation.id"].AsString(); got != "game-7" {
+		t.Errorf("chat span conversation id = %q", got)
+	}
+	// finish_reason lives in gen_ai.response.finish_reasons only.
+	if strings.Contains(a["gen_ai.output.messages"].AsString(), "finish_reason") {
+		t.Errorf("output.messages should not carry finish_reason: %s", a["gen_ai.output.messages"].AsString())
 	}
 }
 
@@ -261,5 +295,44 @@ func TestInferenceErrorEmitsTheExceptionEvent(t *testing.T) {
 func TestExceptionTypeIsTheGoType(t *testing.T) {
 	if got := exceptionType(errors.New("x")); got != "*errors.errorString" {
 		t.Errorf("exceptionType = %s", got)
+	}
+}
+
+// The content switch picks where content goes; the old boolean variable still
+// works when the new one is not set.
+func TestContentCaptureModes(t *testing.T) {
+	for _, tc := range []struct {
+		name, newVar, oldVar string
+		onSpan, onEvent      bool
+	}{
+		{"default", "", "", false, false},
+		{"NO_CONTENT", "NO_CONTENT", "", false, false},
+		{"SPAN_ONLY", "SPAN_ONLY", "", true, false},
+		{"EVENT_ONLY", "EVENT_ONLY", "", false, true},
+		{"SPAN_AND_EVENT", "span_and_event", "", true, true},
+		{"unknown value", "yes", "", false, false},
+		{"legacy true", "", "true", true, true},
+		{"legacy false", "", "false", false, false},
+		{"new variable wins", "NO_CONTENT", "true", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := telemetrytest.Install(t)
+			t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", tc.newVar)
+			t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT", tc.oldVar)
+			c := Instrument(&fakeClient{resp: testResponse()})
+			if _, err := c.Chat(context.Background(), testRequest()); err != nil {
+				t.Fatal(err)
+			}
+			_, onSpan := rec.SpanAttrs("chat m")[0]["gen_ai.input.messages"]
+			ev := rec.Events("gen_ai.client.inference.operation.details")
+			if onSpan != tc.onSpan || (len(ev) == 1) != tc.onEvent {
+				t.Errorf("content on span %v, on event %v (events %d); want %v, %v", onSpan, len(ev) == 1, len(ev), tc.onSpan, tc.onEvent)
+			}
+			if len(ev) == 1 {
+				if _, ok := ev[0].Attrs["gen_ai.input.messages"]; !ok {
+					t.Errorf("details event lacks content")
+				}
+			}
+		})
 	}
 }
