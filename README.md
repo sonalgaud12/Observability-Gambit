@@ -154,6 +154,53 @@ the effort you will use on stage and adjust. The trade-off:
 
 Nothing here calls the API in tests; they use canned Messages API responses.
 
+### OpenAI reasoning models: see the reasoning in the trace
+
+OpenAI's Chat Completions API reports how many reasoning tokens a model spent
+(`gen_ai.usage.reasoning.output_tokens`) but never the reasoning itself. Its
+Responses API returns a *summary* of the reasoning, so `--provider
+openai-responses` calls that API instead, and the summary lands in the trace as
+a `reasoning` part of `gen_ai.output.messages` (with content capture on, see
+[Telemetry configuration](#telemetry-configuration)). The spans are the same
+as for any OpenAI call (`gen_ai.provider.name=openai`); only the API differs.
+
+```bash
+export OPENAI_API_KEY=sk-...
+GAMBIT_EFFORT=low make play GAMES=200 MODEL=gpt-5.4-mini PROVIDER=openai-responses
+make live MODEL=gpt-5.4-mini PROVIDER=openai-responses LIVE_ARGS='--effort low'
+```
+
+`--effort` (`none`, `minimal`, `low`, `medium`, `high` or `xhigh`, depending on
+the model; sent as `reasoning.effort`) and `--llm-timeout` (10m for this
+provider) are the flags described under Claude above.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--provider openai-responses` | `openai` | Use the Responses API (`POST {base-url}/responses`). Same `--base-url`, `--model` and key (`OPENAI_API_KEY` / `GAMBIT_API_KEY`) as before. Reasoning models only: `gpt-4o-mini` and other non-reasoning models reject the reasoning settings, so keep those on `--provider openai`. |
+| `--temperature`, `--max-tokens` | provider default, 4096 | With `openai-responses` the defaults change: reasoning models reject a non-default temperature, and the output cap counts the reasoning tokens, so 1024 would cut moves off. Set either one to override. |
+
+Things to know:
+
+- **A summary, not the raw reasoning.** `reasoning.summary` is `auto`, which
+  OpenAI resolves to `detailed` for the 5.4 models. The raw chain of thought is
+  never returned. Summaries worked on `gpt-5.4-mini` and `gpt-5.4-nano` without
+  organisation verification (checked 2026-11-22); other models may need it, see
+  [OpenAI's reasoning guide](https://platform.openai.com/docs/guides/reasoning).
+- **Nothing is stored.** Every request sends `store: false` and the whole
+  conversation. The model's reasoning items come back encrypted
+  (`reasoning.encrypted_content`) and the client sends them back on the next
+  turn of the same move (a tool call, an illegal-move retry), which is what the
+  API needs to keep reasoning across a function call. Chaining with
+  `previous_response_id` would need `store: true` and does not suit the agent,
+  which rebuilds its message list on every retry.
+- **The stage clock.** Reasoning counts against the per-move cap, so
+  `serve --live` with `--move-timeout auto` treats this provider like Claude:
+  the cap grows with `--effort` (see the `--move-timeout` row under human
+  mode; the numbers are estimates, tune them for the model you use).
+- **Seed and stop sequences are not sent.** The Responses API has neither.
+- **Finish reasons match Chat Completions** (`stop`, `tool_calls`, `length`,
+  `content_filter`): `length` is a response that ran out of `max_output_tokens`.
+
 Useful knobs (`./bin/gambit play -h` for all):
 
 | Flag | Default | Why it matters |
