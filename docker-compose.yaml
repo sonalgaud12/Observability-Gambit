@@ -1,9 +1,9 @@
 # The Observability Gambit: local, vendor-neutral backend stack.
 #
-#   make up        start Collector, Jaeger, ClickHouse, Prometheus, Grafana
+#   make up        start Collector, Tempo, ClickHouse, Prometheus, Grafana
 #   make rehearse  play mock games into it (no API key needed)
 #
-# UIs:  Grafana http://localhost:3000 · Jaeger http://localhost:16686 · Prometheus http://localhost:9090
+# UIs:  Grafana http://localhost:3000 · Prometheus http://localhost:9090
 
 services:
   otel-collector:
@@ -21,13 +21,19 @@ services:
     depends_on:
       clickhouse:
         condition: service_healthy
-      jaeger:
+      tempo:
         condition: service_started
 
-  jaeger:
-    image: jaegertracing/jaeger:2.5.0
+  # Trace storage. Persistent (named volume), unlike the in-memory Jaeger it
+  # replaces. Viewed in Grafana Explore; 3200 is exposed only for curl/debugging.
+  tempo:
+    image: grafana/tempo:2.9.5
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./deploy/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo:/var/tempo
     ports:
-      - "16686:16686"
+      - "3200:3200"
 
   clickhouse:
     image: clickhouse/clickhouse-server:24.8
@@ -70,7 +76,7 @@ services:
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
-    depends_on: [prometheus, jaeger, clickhouse]
+    depends_on: [prometheus, tempo, clickhouse]
 
   # Replays recorded traces from ./data/replay into the Collector (make replay).
   replay:
@@ -104,3 +110,4 @@ services:
 
 volumes:
   clickhouse:
+  tempo:

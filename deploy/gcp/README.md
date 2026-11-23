@@ -2,17 +2,17 @@
 
 One small VM on Google Cloud runs the whole game for people with a link and a
 passcode: the game server (`gambit serve --live`, Stockfish inside), the open-source
-observability stack (Collector, Jaeger, ClickHouse, Prometheus, Grafana), and Caddy
+observability stack (Collector, Tempo, ClickHouse, Prometheus, Grafana), and Caddy
 for HTTPS and passcodes. The Collector also sends every trace to the shared Grafana
 Cloud stack (the same route as `make up-cloud`).
 
 ```
 Internet ─443─▶ Caddy (Let's Encrypt, passcodes)
                   ├─ gambit.example.org        ─▶ gambit:8080   stage UI + human mode
-                  ├─ trace.gambit.example.org  ─▶ jaeger:16686  the "Open trace" links
-                  ├─ dash.gambit.example.org   ─▶ grafana:3000  dashboards, anonymous role Viewer
+                  ├─ dash.gambit.example.org   ─▶ grafana:3000  dashboards and the "Open trace" links
+                  │                                             (Explore on the Tempo datasource)
                   └─ /healthz on the first host: no passcode (uptime check)
-gambit ─OTLP─▶ Collector ─▶ ClickHouse, Jaeger, Prometheus, file, and Grafana Cloud
+gambit ─OTLP─▶ Collector ─▶ ClickHouse, Tempo, Prometheus, file, and Grafana Cloud
 gambit ─HTTPS─▶ OpenAI (gpt-6-luna) or Anthropic (claude-haiku-5-5), the player's pick
 ```
 
@@ -105,12 +105,11 @@ You need `gcloud` signed in, and `doctl` (or your DNS console) for the records.
    deploy/gcp/rotate-passcode.sh add nic
    ```
 
-5. **DNS.** Three A records to the reserved IP (`gcloud compute addresses describe og-play-ip --region asia-northeast1 --format='value(address)'`):
-   `gambit`, `trace.gambit` and `dash.gambit` under your zone. With DigitalOcean DNS:
+5. **DNS.** Two A records to the reserved IP (`gcloud compute addresses describe og-play-ip --region asia-northeast1 --format='value(address)'`):
+   `gambit` and `dash.gambit` under your zone (`trace.gambit` is no longer used; delete the record if you made one for the Jaeger version). With DigitalOcean DNS:
 
    ```bash
    doctl compute domain records create example.org --record-type A --record-name gambit       --record-data <IP> --record-ttl 300
-   doctl compute domain records create example.org --record-type A --record-name trace.gambit --record-data <IP> --record-ttl 300
    doctl compute domain records create example.org --record-type A --record-name dash.gambit  --record-data <IP> --record-ttl 300
    ```
 
@@ -160,7 +159,7 @@ Caddy: live in about ten seconds, no restart. Games already running keep going.
 **Attribution.** Caddy logs the username (`user_id`) with every request and sends it to the game as the
 `X-Gambit-User` header (always overwritten, a client cannot choose it). The game records it as
 `gambit.player.label` on the `chess.move` and `invoke_agent` spans of that player's games, and as
-`player` in `data/games.jsonl`. In Jaeger or Grafana Cloud filter by that attribute. The passcode itself
+`player` in `data/games.jsonl`. In Tempo (Grafana Explore) or Grafana Cloud filter by that attribute. The passcode itself
 is never logged or traced (Caddy redacts the `Authorization` header and strips it before proxying).
 
 Use a long passcode (the script makes 24 random characters): Caddy has no lockout.
@@ -180,10 +179,11 @@ gcloud compute instances add-metadata og-play --project="$PROJECT" --zone="$ZONE
 gcloud compute ssh og-play --project="$PROJECT" --zone="$ZONE" --tunnel-through-iap --command='sudo google_metadata_script_runner startup'
 ```
 
-Caveats worth knowing: Jaeger keeps traces in memory, so trace links for older games
-stop working after a restart (ClickHouse and Grafana Cloud keep the data; `make replay`
-refills Jaeger). A trace link appears about 20 s after a move is graded (the Collector's tail
-sampling window). Prompt capture is on, so players' moves and the model's replies are stored on the VM
+Caveats worth knowing: Tempo keeps traces on the `tempo` named volume, so trace links survive restarts and
+redeploys (`docker compose down -v` deletes the volume; a plain `down` does not).
+The links open the trace in Grafana Explore at `dash.<domain>` with a time window around the move,
+so the passcode that opens the game opens the trace. Every trace goes to Tempo (no sampling; the volume is a few hundred spans per game, well inside the
+VM's disk at the 150-games-a-day cap), and a trace link appears about 5 s after a move is graded. Prompt capture is on, so players' moves and the model's replies are stored on the VM
 and in Grafana Cloud: tell players.
 
 ## Test it on your laptop first
@@ -194,7 +194,7 @@ deploy/gcp/local-test.sh
 
 Runs the production compose files with the mock model (no keys, no spend), a local Caddy certificate
 on `gambit.localhost`, two passcodes, and checks passcode login, `/healthz`, SSE through the proxy,
-the one-game lock from two logins, both model options, passcode labels in Jaeger traces, trace links,
+the one-game lock from two logins, both model options, passcode labels in Tempo traces, trace links,
 the idle timeout, the model allow-list and the same-origin rule. `make up-prod` starts the same stack
 from a `.env.prod` (see `env.example`; it needs a passcode file made by `render-auth.sh`).
 

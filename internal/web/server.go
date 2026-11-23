@@ -33,14 +33,14 @@ type Options struct {
 	Addr      string
 	DataDir   string
 	ModelPath string
-	TraceURL  string // e.g. http://localhost:16686/trace/{trace_id}
+	TraceURL  string // see ExploreTraceURL; {trace_id} is replaced
 
 	// Live, if set, enables human mode (see internal/game/live.go). The
 	// caller owns it and closes it after Serve returns.
 	Live *game.Live
 	// TraceDelay is how long after a live move is graded its trace link is
-	// offered: with the default Collector, a trace reaches Jaeger only after
-	// the tail sampler's decision_wait.
+	// offered: a trace reaches Tempo only after the
+	// Collector's batch timeout.
 	TraceDelay time.Duration
 	// Ctx, if set, stops the server when it is done.
 	Ctx context.Context

@@ -1,15 +1,16 @@
 # The Observability Gambit: vendor-neutral Collector pipeline.
 #
 #   chess-agent --OTLP--> [this Collector]
-#        traces/all      -> ClickHouse (SQL correlation), OTLP-JSON file (dataset + replay), spanmetrics
-#        traces/sampled  -> tail_sampling -> Jaeger  (only the interesting traces)
+#        traces/all      -> ClickHouse (SQL correlation), OTLP-JSON file (dataset + replay), spanmetrics,
+#                           Tempo (every trace, so every "Open trace" link resolves)
 #        metrics         -> Prometheus (RED metrics per model and per move class, with exemplars)
 #        metrics/genai   -> Prometheus (the SDK's gen_ai.* convention metrics)
 #        logs/genai      -> ClickHouse + OTLP-JSON file (gen_ai.* events, e.g. gen_ai.evaluation.result)
 #
-# The point of the two trace pipelines: the analysis store keeps everything,
-# while the trace UI keeps only what a human should look at, decided AFTER the
-# grader has labeled the move. Head sampling in the SDK could never do that.
+# Nothing is sampled out: the UI links every move of every game, so Tempo gets
+# every trace (local disk, a game is a few hundred spans). The earlier design
+# kept only blunders, retries, errors and a 10% baseline in the trace UI, which
+# made links on the other moves read "trace not found".
 
 receivers:
   otlp:
@@ -29,44 +30,6 @@ processors:
     send_batch_size: 1024
     timeout: 2s
 
-  # Decide per trace once the whole move (decision + grading) has arrived.
-  tail_sampling:
-    decision_wait: 15s
-    num_traces: 50000
-    expected_new_traces_per_sec: 50
-    policies:
-      - name: keep-blunders-and-mistakes
-        type: string_attribute
-        string_attribute:
-          key: chess.move.class
-          values: [blunder, mistake]
-      - name: keep-illegal-move-retries
-        type: numeric_attribute
-        numeric_attribute:
-          key: chess.illegal_attempts
-          min_value: 1
-          max_value: 1000
-      # Games a person played from the stage UI (gambit serve --live): keep
-      # every move, so its "Open trace" link always lands on a trace. Needs the
-      # move to finish within decision_wait, see the README's human mode section.
-      - name: keep-human-games
-        type: string_attribute
-        string_attribute:
-          key: gambit.run.mode
-          values: [human]
-      - name: keep-errors
-        type: status_code
-        status_code:
-          status_codes: [ERROR]
-      - name: keep-slow-decisions
-        type: latency
-        latency:
-          threshold_ms: 20000
-      - name: baseline
-        type: probabilistic
-        probabilistic:
-          sampling_percentage: 10
-
 connectors:
   spanmetrics:
     namespace: gambit
@@ -84,8 +47,8 @@ connectors:
     metrics_flush_interval: 15s
 
 exporters:
-  otlp/jaeger:
-    endpoint: jaeger:4317
+  otlp/tempo:
+    endpoint: tempo:4317
     tls:
       insecure: true
 
@@ -132,11 +95,7 @@ service:
     traces/all:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [clickhouse, file/raw, spanmetrics]
-    traces/sampled:
-      receivers: [otlp]
-      processors: [memory_limiter, tail_sampling, batch]
-      exporters: [otlp/jaeger]
+      exporters: [clickhouse, file/raw, spanmetrics, otlp/tempo]
     metrics/spanmetrics:
       receivers: [spanmetrics]
       processors: [batch]

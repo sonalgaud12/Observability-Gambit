@@ -7,15 +7,37 @@ datasources:
     url: http://prometheus:9090
     isDefault: true
     jsonData:
-      # Click an exemplar dot on a latency panel -> open that trace in Jaeger.
+      # Click an exemplar dot on a latency panel -> open that trace in Tempo.
       exemplarTraceIdDestinations:
         - name: trace_id
-          datasourceUid: jaeger
+          datasourceUid: tempo
 
-  - name: Jaeger
-    uid: jaeger
-    type: jaeger
-    url: http://jaeger:16686
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    url: http://tempo:3200
+    jsonData:
+      # Span -> metrics: the Collector's spanmetrics RED series for the span's service.
+      tracesToMetrics:
+        datasourceUid: prometheus
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        tags:
+          - { key: gen_ai.request.model, value: gen_ai_request_model }
+          - { key: chess.move.class, value: chess_move_class }
+        queries:
+          - name: Calls
+            query: sum(rate(gambit_calls_total{$$__tags}[5m]))
+          - name: p95 duration
+            query: histogram_quantile(0.95, sum(rate(gambit_duration_milliseconds_bucket{$$__tags}[5m])) by (le))
+      # Span -> logs: gen_ai.* events and logs live in ClickHouse (otel.otel_logs), not Loki,
+      # so there is no trace-to-logs link; use the SQL in sql/ or the ClickHouse panels.
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
 
   - name: ClickHouse
     uid: clickhouse

@@ -2,7 +2,7 @@
 # Runs the whole production stack on this machine with the mock model (no API keys,
 # no spend, nothing leaves the laptop) and checks it end to end with e2e.py:
 # two passcodes, HTTPS with Caddy's local certificate, the one-game lock, SSE
-# through the proxy, both model options, passcode labels on traces, trace links,
+# through the proxy, both model options, passcode labels on traces, trace links (Grafana Explore on Tempo),
 # the idle timeout. Needs Docker, python3 and openssl. Takes about 3 minutes.
 #
 #   deploy/gcp/local-test.sh          # leaves nothing running when it finishes
@@ -32,7 +32,7 @@ ENV
 cat >"$tmp/ports.yaml" <<'YAML'
 services:
   otel-collector: { ports: !override ["127.0.0.1:24317:4317", "127.0.0.1:24318:4318", "127.0.0.1:28889:8889", "127.0.0.1:23133:13133"] }
-  jaeger:         { ports: !override ["127.0.0.1:26686:16686"] }
+  tempo:          { ports: !override ["127.0.0.1:23200:3200"] }
   clickhouse:     { ports: !override ["127.0.0.1:28123:8123", "127.0.0.1:29000:9000"] }
   prometheus:     { ports: !override ["127.0.0.1:29090:9090"] }
   grafana:        { ports: !override ["127.0.0.1:23000:3000"] }

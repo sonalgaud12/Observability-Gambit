@@ -1,0 +1,35 @@
+# Grafana Tempo, single binary, local disk (the "tempo" named volume), so
+# traces survive `docker compose restart`/`down`. OTLP in from the Collector's
+# traces/all pipeline (every trace, unsampled); Grafana reads it on :3200.
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+
+ingester:
+  # Cut blocks soon, so a finished game's traces reach disk (and stay
+  # searchable after a restart) without waiting for the 30m default.
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    # Keep traces for 90 days; the rehearsal/talk data is small. Retention is
+    # measured from the block's end time, which comes from the spans' own
+    # timestamps, so a replayed recording older than this is compacted away
+    # again. For a longer window, raise this (e.g. 8760h for a year).
+    block_retention: 2160h
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
