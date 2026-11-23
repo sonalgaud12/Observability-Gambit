@@ -14,7 +14,8 @@
 GAMES      ?= 50
 PARALLEL   ?= 4
 MODEL      ?= gpt-4o-mini
-BASE_URL   ?= https://api.openai.com/v1
+BASE_URL   ?=
+# BASE_URL empty = the provider's own default (OpenAI, or Anthropic for PROVIDER=anthropic).
 PROVIDER   ?= openai
 STOCKFISH  ?= stockfish
 GAME       ?=
@@ -68,7 +69,7 @@ rehearse: build
 
 play: build
 	./bin/gambit play --games $(GAMES) --parallel $(PARALLEL) \
-		--model $(MODEL) --base-url $(BASE_URL) --provider $(PROVIDER)
+		--model $(MODEL) --base-url '$(BASE_URL)' --provider $(PROVIDER)
 
 analyze: build
 	./bin/gambit analyze --data data --out out
@@ -79,7 +80,7 @@ serve: build
 # Human mode: you play the agent from http://localhost:8080/live.html.
 # Extra flags go in LIVE_ARGS, e.g. LIVE_ARGS='--move-timeout 10s --script "e4 Nf3 Bc4"'.
 live: build
-	./bin/gambit serve --live --agent-model $(MODEL) --base-url $(BASE_URL) --provider $(PROVIDER) $(LIVE_ARGS)
+	./bin/gambit serve --live --agent-model $(MODEL) --base-url '$(BASE_URL)' --provider $(PROVIDER) $(LIVE_ARGS)
 
 live-mock: build
 	./bin/gambit serve --live --mock $(LIVE_ARGS)

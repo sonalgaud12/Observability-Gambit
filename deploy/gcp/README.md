@@ -32,7 +32,7 @@ your shell, Secret Manager and DNS, never in this repository.
 
 | Option | Provider | Model id | Key (Secret Manager) |
 |---|---|---|---|
-| Claude Haiku 5.5 (default) | Anthropic, OpenAI-compatible endpoint | `claude-haiku-5-5` | `og-anthropic-key` |
+| Claude Haiku 5.5 (default) | Anthropic Messages API (native; shows the thinking summary) | `claude-haiku-5-5` | `og-anthropic-key` |
 | GPT-6 Luna | OpenAI Chat Completions | `gpt-6-luna` | `og-openai-key` |
 
 Verified on 2026-11-17 against OpenAI's model page (`developers.openai.com/api/docs/models/gpt-6-luna`
@@ -41,8 +41,15 @@ Completions, and **function calling on Chat Completions works only with
 `reasoning_effort: "none"`** (the model's default is `medium`). The game's agent calls tools,
 so the `luna-6` option sends `reasoning_effort: "none"` and `max_completion_tokens` (instead of
 `max_tokens`; OpenAI's docs do not say which a GPT-6 model wants, `max_completion_tokens` is the
-documented replacement). The Haiku option uses the flags of the earlier pilots
-(`--temperature -1 --max-tokens 4096`). Pricing is listed at $0.10 / $0.50 per million
+documented replacement). The Haiku option calls Anthropic's native Messages API (`/v1/messages`) with adaptive thinking and
+summaries on, so Claude's reasoning and its thinking-token count reach the trace (the
+OpenAI-compatible endpoint returns neither). It leaves temperature to the provider and caps output at
+4096 tokens, which thinking counts against. Thinking adds seconds to a move, so the per-move cap is
+`--move-timeout ${GAMBIT_MOVE_TIMEOUT:-auto}` in `docker-compose.prod.yaml`: `auto` is 20s at
+`GAMBIT_EFFORT=low`, 30s at `medium` (the model's default, so also when `GAMBIT_EFFORT` is empty),
+60s at `high`, and 15s if no Claude model is offered. Set `GAMBIT_MOVE_TIMEOUT=45s` (or `0`) to
+choose yourself. The trade-off is in the README's "Claude and its reasoning". Those numbers are
+estimates: play a game on each effort before the talk and adjust. Pricing is listed at $0.10 / $0.50 per million
 input / output tokens for GPT-6 Luna. **Not verified without spending money:** a real call to
 either model. Do the two curl smoke tests below once before sharing the link.
 
@@ -126,8 +133,8 @@ You need `gcloud` signed in, and `doctl` (or your DNS console) for the records.
 7. **Smoke-test both models with a real call** (a few cents) before sharing the link:
 
    ```bash
-   curl -sS https://api.anthropic.com/v1/chat/completions -H "Authorization: Bearer $ANTHROPIC_KEY" -H 'Content-Type: application/json' \
-     -d '{"model":"claude-haiku-5-5","max_tokens":64,"messages":[{"role":"user","content":"say ok"}]}' | head -c 300
+   curl -sS https://api.anthropic.com/v1/messages -H "x-api-key: $ANTHROPIC_KEY" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' \
+     -d '{"model":"claude-haiku-5-5","max_tokens":256,"thinking":{"type":"adaptive","display":"summarized"},"messages":[{"role":"user","content":"say ok"}]}' | head -c 300
    curl -sS https://api.openai.com/v1/chat/completions -H "Authorization: Bearer $OPENAI_KEY" -H 'Content-Type: application/json' \
      -d '{"model":"gpt-6-luna","reasoning_effort":"none","max_completion_tokens":64,"messages":[{"role":"user","content":"say ok"}]}' | head -c 300
    ```

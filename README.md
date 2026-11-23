@@ -75,7 +75,7 @@ Then open Grafana (http://localhost:3000; traces are in Explore, on the Tempo da
 
 ## Real runs
 
-Any OpenAI-compatible endpoint works.
+Any OpenAI-compatible endpoint works, and Claude has its own client (below).
 
 ```bash
 # OpenAI
@@ -87,7 +87,72 @@ make play GAMES=200 MODEL=llama3.1:8b BASE_URL=http://localhost:11434/v1 PROVIDE
 
 # Any other compatible gateway
 ./bin/gambit play --base-url https://<gateway>/v1 --provider <name> --model <model> --games 100
+
+# Claude, over Anthropic's native Messages API (see below)
+export ANTHROPIC_API_KEY=sk-ant-...
+./bin/gambit play --provider anthropic --model claude-haiku-5-5 --max-tokens 4096 --games 100
 ```
+
+### Claude and its reasoning
+
+`--provider anthropic` calls Anthropic's native Messages API (`POST /v1/messages`)
+instead of the OpenAI-compatible Chat Completions client, which stays the
+default for every other provider. The compatibility endpoint returns no thinking
+text and no thinking-token count, so with it the reasoning attributes stay empty
+for Claude. The native client asks for adaptive thinking with summaries
+(`thinking: {type: "adaptive", display: "summarized"}`; Claude 5 models reject
+`budget_tokens` and disabled thinking) and maps what comes back:
+
+- the thinking summary becomes the `reasoning` part of `gen_ai.output.messages`
+  (opt-in content, like every message);
+- `usage.output_tokens_details.thinking_tokens` becomes
+  `gen_ai.usage.reasoning.output_tokens`. The API reports it as part of
+  `output_tokens`, as the convention wants. It is the raw reasoning the model
+  generated, not the length of the summary. If a response lacks that field
+  (an older model or a proxy), the attribute is left off rather than estimated;
+- Anthropic's `input_tokens` excludes cached tokens, so the span's
+  `gen_ai.usage.input_tokens` is input + cache read + cache write, with
+  `gen_ai.usage.cache_read.input_tokens` and `.cache_write.input_tokens` as
+  subsets of it;
+- `gen_ai.response.finish_reasons` carries Anthropic's own value: `end_turn`,
+  `tool_use`, `max_tokens`, `stop_sequence` or `refusal`. A refusal is a normal
+  200 response with no content, so the agent sees an unreadable answer and
+  retries; `max_tokens` sets `finish_length` like OpenAI's `length` does.
+
+The thinking blocks (with their signatures) are sent back unchanged on the next
+request, across tool rounds and illegal-move retries.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--provider anthropic` | `openai` | Use the native Anthropic client. Key from `ANTHROPIC_API_KEY` (or `GAMBIT_API_KEY`); an OpenAI key is never sent. The base URL defaults to `https://api.anthropic.com` (a trailing `/v1` is fine). |
+| `--effort` | the model's default | `low`, `medium`, `high`, `xhigh`, `max`: sent as `output_config.effort` and recorded as `gen_ai.request.reasoning.level`. Claude Haiku 5.5 defaults to `medium`. Also `GAMBIT_EFFORT`. With `serve --models`, it tunes the Claude option only. |
+| `--llm-timeout` | 10m for `anthropic`, 3m otherwise | HTTP timeout for one model call, thinking included. |
+| `--temperature` | provider default for `anthropic` | Claude 5 models reject any value but their default, so the 0.7 used elsewhere is not sent unless you pass `--temperature`. |
+
+Thinking counts against `--max-tokens`: a cap sized for a short answer can be
+used up by thinking (`finish_reasons=max_tokens`, no text). Use 4096 or more,
+or a lower `--effort`.
+
+**Thinking and the stage clock.** Thinking counts against the same per-move cap as
+the answer, so `serve --live` sets `--move-timeout auto` by effort
+(see the `--move-timeout` row under human mode) instead of a flat 15s. The numbers are estimates, not measurements: play a game at
+the effort you will use on stage and adjust. The trade-off:
+
+- *Shorter cap, lower effort:* a snappier clock, but the cap can cut off a model
+  that is still thinking, and the move becomes a random fallback flagged
+  `timed_out`. That can be a good demo of a blunder, and a bad one of the model.
+- *Longer cap, higher effort:* better moves and richer reasoning in the trace, but
+  the human waits longer each move, and a model that hangs takes the whole cap to
+  be noticed. The live clock (amber, then red) is drawn against the cap, so a 60s
+  cap looks like a slow model, not a stuck one.
+- Collector sampling is no longer a limit: every trace goes to Tempo (see "Trace
+  links and the Collector"), and the "Open trace" link is offered after the move is
+  graded, so a long move's trace is complete by then.
+- The coach (one comment per human move) has its own fixed 25s cap per call. On
+  Claude it ignores `--effort`: it always asks for `low` effort with a 2048-token
+  cap so thinking cannot crowd out its few sentences.
+
+Nothing here calls the API in tests; they use canned Messages API responses.
 
 Useful knobs (`./bin/gambit play -h` for all):
 
@@ -221,7 +286,7 @@ model is `--agent-model` here because `--model` is the analysis bundle.
 | Flag | Default | What it does |
 |---|---|---|
 | `--live` | off | Turn human mode on. Without it, `serve` is the replay UI only. |
-| `--move-timeout` | 15s | Hard cap on one agent move, retries and tool calls included. `0` = no cap. |
+| `--move-timeout` | `auto` (15s) | Hard cap on one agent move, retries and tool calls included. A duration, `0` for no cap, or `auto`: 15s, or longer when Claude thinks (20s at `--effort low`, 30s at `medium` or the model's default, 60s `high`, 90s `xhigh`, 120s `max`). Also `GAMBIT_MOVE_TIMEOUT`. See "Claude and its reasoning". |
 | `--script` | none | Scripted opening: the human's moves, e.g. `"e4 Nf3 Bc4"`. Editable in the UI. |
 | `--trace-delay` | 5s | How long after a move is graded its "Open trace" link is offered (see below). |
 | `--grader-depth` | 14 | Same label as batch games. |
@@ -231,7 +296,7 @@ flags. All are off by default, so on a laptop nothing changes:
 
 | Flag | What it does |
 |---|---|
-| `--models haiku-5.5,luna-6` | Offer exactly these models; the player picks one per game on the start screen. The first is the default (`--default-model`). Each needs its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and replaces `--agent-model`, `--base-url`, `--provider`. |
+| `--models haiku-5.5,luna-6` | Offer exactly these models; the player picks one per game on the start screen. The first is the default (`--default-model`). Each needs its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and replaces `--agent-model`, `--base-url`, `--provider`. `haiku-5.5` uses the native Anthropic client. |
 | `--exclusive` | A new game while one is running gets HTTP 409 instead of abandoning it. |
 | `--max-games-per-hour`, `--max-games-per-day` | Cap game starts; beyond it HTTP 429 with a `Retry-After` header. |
 | `--idle-timeout` | End a game whose human has not moved for this long. |

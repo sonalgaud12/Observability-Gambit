@@ -67,6 +67,7 @@ const (
 
 const (
 	coachMaxTokens     = 400              // per call: a few short sentences
+	coachThinkingMax   = 2048             // Anthropic: thinking counts against max_tokens, so leave room for the answer
 	coachTimeout       = 25 * time.Second // per call, retries excluded (there are none)
 	coachMaxInFlight   = 2                // concurrent coach calls per game
 	coachMaxChars      = 700              // longer answers are cut at a sentence
@@ -360,7 +361,7 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 		sc.GambitAgentVersion.String(telemetry.Version),
 		sc.GenAIProviderName.String(provider),
 		sc.GenAIRequestModel.String(c.model),
-		sc.GenAIRequestMaxTokens.Int(coachMaxTokens),
+		sc.GenAIRequestMaxTokens.Int(coachMaxTokensFor(provider)),
 		sc.GenAIConversationID.String(s.ID),
 		sc.GambitRunMode.String("human"),
 		sc.GambitCoachKind.String(kind),
@@ -391,11 +392,16 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 		return "", usage, err
 	}
 
-	resp, err := c.client.Chat(actx, llm.Request{
+	creq := llm.Request{
 		Model: c.model, Messages: coachMessages(f, kind),
 		Temperature: c.temp, MaxTokens: coachMaxTokens,
 		PromptName: CoachPromptName, PromptVersion: coachPromptVersion,
-	})
+	}
+	creq.MaxTokens = coachMaxTokensFor(provider)
+	if provider == "anthropic" {
+		creq.ReasoningLevel = "low"
+	}
+	resp, err := c.client.Chat(actx, creq)
 	chatCalls = 1
 	if err != nil {
 		return fail(err, "_OTHER")
@@ -411,6 +417,13 @@ func (s *Session) askCoachModel(ctx context.Context, ply int, kind string, f ply
 		return fail(errUnreadable, "unreadable_answer")
 	}
 	return text, usage, nil
+}
+
+func coachMaxTokensFor(provider string) int {
+	if provider == "anthropic" {
+		return coachThinkingMax
+	}
+	return coachMaxTokens
 }
 
 // --- the prompt --------------------------------------------------------------

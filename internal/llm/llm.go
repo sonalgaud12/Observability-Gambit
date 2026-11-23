@@ -2,7 +2,10 @@
 // for an agent that talks, calls tools, and gets retried.
 package llm
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Message is one chat turn.
 type Message struct {
@@ -13,6 +16,11 @@ type Message struct {
 	// Reasoning is the model's visible thinking, when an OpenAI-compatible
 	// server returns it (reasoning_content / reasoning). Never sent back.
 	Reasoning string `json:"-"`
+	// ProviderContent is an assistant turn's content exactly as the provider
+	// returned it. The Anthropic client sends it back unchanged on the next
+	// request, which is how thinking blocks (and their signatures) survive a
+	// tool round trip or a retry. Never sent by other clients.
+	ProviderContent json.RawMessage `json:"-"`
 }
 
 // ToolCall is a model's request to run a tool.

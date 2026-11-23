@@ -211,3 +211,96 @@ func TestMetricToolCalls(t *testing.T) {
 		t.Errorf("tools, two called: got %d, want 2", got)
 	}
 }
+
+// The same loop as TestOpenAICompatibleLoop, over the native Messages API:
+// an illegal move, a tool call and a legal move, each answer carrying a
+// thinking block that must come back unchanged on the next request.
+func TestAnthropicLoopKeepsThinkingAcrossTurns(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" || r.Header.Get("x-api-key") != "k" {
+			http.Error(w, "bad request", 400)
+			return
+		}
+		var req struct {
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		last := req.Messages[len(req.Messages)-1]
+		usage := `"usage":{"input_tokens":100,"output_tokens":40,"output_tokens_details":{"thinking_tokens":25}}`
+		switch calls.Add(1) {
+		case 1: // illegal
+			w.Write([]byte(`{"id":"r1","model":"claude-haiku-5-5","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"Queen out early.","signature":"s1"},{"type":"text","text":"MOVE: Qh5"}],` + usage + `}`))
+		case 2: // the illegal-move reply: the first answer, thinking block first
+			if !strings.Contains(string(req.Messages[len(req.Messages)-2].Content), `"signature":"s1"`) || last.Role != "user" {
+				t.Errorf("thinking block not sent back after an illegal move: %+v", req.Messages)
+			}
+			w.Write([]byte(`{"id":"r2","model":"claude-haiku-5-5","stop_reason":"tool_use","content":[{"type":"thinking","thinking":"Check the legal moves.","signature":"s2"},{"type":"tool_use","id":"toolu_1","name":"legal_moves","input":{}}],` + usage + `}`))
+		default:
+			if last.Role != "user" || !strings.Contains(string(last.Content), `"tool_result"`) || !strings.Contains(string(last.Content), "Nf3") ||
+				!strings.Contains(string(req.Messages[len(req.Messages)-2].Content), `"signature":"s2"`) {
+				t.Errorf("tool result or thinking block not sent back: %+v", req.Messages)
+			}
+			w.Write([]byte(`{"id":"r3","model":"claude-haiku-5-5","stop_reason":"end_turn","content":[{"type":"thinking","thinking":"Develop a knight.","signature":"s3"},{"type":"text","text":"Develop.\nMOVE: Nf3"}],` + usage + `}`))
+		}
+	}))
+	defer srv.Close()
+
+	rec := tracetest.NewSpanRecorder()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)))
+	t.Setenv("OTEL_INSTRUMENTATION_GENAI_CAPTURE_CONTENT", "SPAN_ONLY")
+
+	ag := New(Config{Model: "claude-haiku-5-5", Temperature: -1, MaxTokens: 4096, MaxRetries: 2, Tools: true},
+		llm.Instrument(llm.NewAnthropic(srv.URL, "k")), 1)
+	mv, st, err := ag.Choose(context.Background(), chess.NewGame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := (chess.UCINotation{}).Encode(nil, mv); got != "g1f3" {
+		t.Fatalf("move = %s", got)
+	}
+	if st.IllegalAttempts != 1 || st.ToolCalls != 1 || st.ChatCalls != 3 || st.ReasoningTokens != 75 || st.Fallback || st.FinishReason != "end_turn" {
+		t.Errorf("unexpected stats: %+v", st)
+	}
+	chats := 0
+	for _, s := range rec.Ended() {
+		if s.Name() != "chat claude-haiku-5-5" {
+			continue
+		}
+		chats++
+		for _, kv := range s.Attributes() {
+			switch string(kv.Key) {
+			case "gen_ai.provider.name":
+				if kv.Value.AsString() != "anthropic" {
+					t.Errorf("provider = %s", kv.Value.AsString())
+				}
+			case "gen_ai.usage.reasoning.output_tokens":
+				if kv.Value.AsInt64() != 25 {
+					t.Errorf("reasoning tokens = %d", kv.Value.AsInt64())
+				}
+			}
+		}
+	}
+	if chats != 3 {
+		t.Errorf("chat spans = %d", chats)
+	}
+}
+
+// Thinking can use the whole output cap; Anthropic calls that max_tokens.
+func TestFinishLengthCountsAnthropicMaxTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"id":"r","model":"m","stop_reason":"max_tokens","content":[{"type":"thinking","thinking":"hmm","signature":"s"}],"usage":{"input_tokens":5,"output_tokens":1024}}`))
+	}))
+	defer srv.Close()
+	ag := New(Config{Model: "m", Temperature: -1, MaxTokens: 1024, MaxRetries: 0}, llm.NewAnthropic(srv.URL, "k"), 1)
+	_, st, err := ag.Choose(context.Background(), chess.NewGame())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !st.FinishLength || !st.Fallback {
+		t.Errorf("stats = %+v", st)
+	}
+}
