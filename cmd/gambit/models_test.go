@@ -126,8 +126,8 @@ func TestEffortFlagTunesClaudeButNotLuna(t *testing.T) {
 	if h.Effort != "low" || h.HTTP.Timeout != 5*time.Minute {
 		t.Errorf("haiku client = %+v", h)
 	}
-	l := cs[1].NewClient(1, nil).(*llm.Instrumented).Inner.(*llm.OpenAICompatible)
-	if l.ReasoningEffort != "none" || l.HTTP.Timeout != 5*time.Minute {
+	l := cs[1].NewClient(1, nil).(*llm.Instrumented).Inner.(*llm.OpenAIResponses)
+	if l.Effort != "low" || l.HTTP.Timeout != 5*time.Minute {
 		t.Errorf("luna client = %+v", l)
 	}
 }
@@ -161,8 +161,9 @@ func TestMoveTimeoutFollowsClaudeEffort(t *testing.T) {
 		{[]string{"--provider", "anthropic", "--effort", "low"}, nil, "auto", 20 * time.Second},
 		{[]string{"--provider", "anthropic", "--effort", "high"}, nil, "auto", 60 * time.Second},
 		{[]string{"--provider", "anthropic", "--effort", "max"}, nil, "auto", 120 * time.Second},
-		{nil, []string{"luna-6"}, "auto", 15 * time.Second},
-		{nil, []string{"haiku-5.5", "luna-6"}, "auto", 30 * time.Second},
+		{nil, []string{"luna-6"}, "auto", 20 * time.Second},              // Luna reasons at effort low
+		{nil, []string{"haiku-5.5", "luna-6"}, "auto", 30 * time.Second}, // Haiku's cap is unchanged
+		{[]string{"--effort", "low"}, []string{"haiku-5.5", "luna-6"}, "auto", 20 * time.Second},
 		{[]string{"--provider", "anthropic", "--mock"}, nil, "auto", 15 * time.Second},
 		{[]string{"--provider", "anthropic"}, nil, "45s", 45 * time.Second}, // explicit wins
 		{nil, nil, "0", 0},

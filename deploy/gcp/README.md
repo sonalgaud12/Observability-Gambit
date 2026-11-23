@@ -33,21 +33,26 @@ your shell, Secret Manager and DNS, never in this repository.
 | Option | Provider | Model id | Key (Secret Manager) |
 |---|---|---|---|
 | Claude Haiku 5.5 (default) | Anthropic Messages API (native; shows the thinking summary) | `claude-haiku-5-5` | `og-anthropic-key` |
-| GPT-6 Luna | OpenAI Chat Completions | `gpt-6-luna` | `og-openai-key` |
+| GPT-6 Luna | OpenAI Responses API (native; shows the reasoning summary), effort `low` | `gpt-6-luna` | `og-openai-key` |
 
-Verified on 2026-11-17 against OpenAI's model page (`developers.openai.com/api/docs/models/gpt-6-luna`
-and the latest-model guide): the id is `gpt-6-luna` (no dated snapshot), it supports Chat
-Completions, and **function calling on Chat Completions works only with
-`reasoning_effort: "none"`** (the model's default is `medium`). The game's agent calls tools,
-so the `luna-6` option sends `reasoning_effort: "none"` and `max_completion_tokens` (instead of
-`max_tokens`; OpenAI's docs do not say which a GPT-6 model wants, `max_completion_tokens` is the
-documented replacement). The Haiku option calls Anthropic's native Messages API (`/v1/messages`) with adaptive thinking and
+Verified on 2026-11-23 against OpenAI's model page (`developers.openai.com/api/docs/models/gpt-6-luna`)
+and reasoning guide: the id is `gpt-6-luna` (no dated snapshot); `reasoning.effort` accepts `none`,
+`low`, `medium` (default), `high`, `xhigh`, `max`; and **Chat Completions supports function calling
+only with `reasoning_effort: "none"`**, which returns no reasoning, while the Responses API is the
+documented route for function calling (no effort restriction is stated there). The game's agent
+calls tools and the trace should show reasoning, so the `luna-6` option uses the native Responses
+API (`/v1/responses`, stateless, `store: false`) at `reasoning.effort: "low"` with
+`reasoning.summary: "auto"`: the smallest effort that still reasons, so the summary and the
+reasoning-token count reach the trace. `--effort`/`GAMBIT_EFFORT` tunes Haiku only. **Not verified
+without spending money:** that Luna returns a summary at `low`; the live Luna test checks it.
+In the `agent_moved` event, `reasoning` is still the answer text (as for Haiku); the summary is in
+the trace's chat span. The Haiku option calls Anthropic's native Messages API (`/v1/messages`) with adaptive thinking and
 summaries on, so Claude's reasoning and its thinking-token count reach the trace (the
 OpenAI-compatible endpoint returns neither). It leaves temperature to the provider and caps output at
 4096 tokens, which thinking counts against. Thinking adds seconds to a move, so the per-move cap is
 `--move-timeout ${GAMBIT_MOVE_TIMEOUT:-auto}` in `docker-compose.prod.yaml`: `auto` is 20s at
 `GAMBIT_EFFORT=low`, 30s at `medium` (the model's default, so also when `GAMBIT_EFFORT` is empty),
-60s at `high`, and 15s if no Claude model is offered. Set `GAMBIT_MOVE_TIMEOUT=45s` (or `0`) to
+60s at `high` for Haiku; Luna runs at `low`, so it needs 20s, and the cap is the longest of the offered models (20s if only Luna is offered). Set `GAMBIT_MOVE_TIMEOUT=45s` (or `0`) to
 choose yourself. The trade-off is in the README's "Claude and its reasoning". Those numbers are
 estimates: play a game on each effort before the talk and adjust. Pricing is listed at $0.10 / $0.50 per million
 input / output tokens for GPT-6 Luna. **Not verified without spending money:** a real call to
@@ -135,8 +140,8 @@ You need `gcloud` signed in, and `doctl` (or your DNS console) for the records.
    ```bash
    curl -sS https://api.anthropic.com/v1/messages -H "x-api-key: $ANTHROPIC_KEY" -H 'anthropic-version: 2023-06-01' -H 'Content-Type: application/json' \
      -d '{"model":"claude-haiku-5-5","max_tokens":256,"thinking":{"type":"adaptive","display":"summarized"},"messages":[{"role":"user","content":"say ok"}]}' | head -c 300
-   curl -sS https://api.openai.com/v1/chat/completions -H "Authorization: Bearer $OPENAI_KEY" -H 'Content-Type: application/json' \
-     -d '{"model":"gpt-6-luna","reasoning_effort":"none","max_completion_tokens":64,"messages":[{"role":"user","content":"say ok"}]}' | head -c 300
+   curl -sS https://api.openai.com/v1/responses -H "Authorization: Bearer $OPENAI_KEY" -H 'Content-Type: application/json' \
+     -d '{"model":"gpt-6-luna","reasoning":{"effort":"low","summary":"auto"},"max_output_tokens":256,"store":false,"input":"say ok"}' | head -c 300
    ```
 
    Then play one game on each model from the browser and open its trace link.

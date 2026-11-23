@@ -155,16 +155,27 @@ func (m *modelFlags) moveTimeout(flagValue string, ids []string) (time.Duration,
 		}
 		return d, nil
 	}
-	claude := m.native() || m.responses() // models that reason before they answer
-	for _, id := range ids {
-		if presets[id].Provider == "anthropic" {
-			claude = true
-		}
-	}
-	if *m.mock || !claude {
+	if *m.mock {
 		return autoMoveTimeout(false, ""), nil
 	}
-	return autoMoveTimeout(true, *m.effort), nil
+	reasons := m.native() || m.responses() // models that reason before they answer
+	var longest time.Duration
+	if reasons {
+		longest = autoMoveTimeout(true, *m.effort)
+	}
+	for _, id := range ids {
+		p := presets[id]
+		switch {
+		case p.Provider == "anthropic": // --effort tunes the Claude options
+			longest = max(longest, autoMoveTimeout(true, *m.effort))
+		case p.Responses: // a preset with its own fixed effort
+			longest = max(longest, autoMoveTimeout(true, p.Effort))
+		}
+	}
+	if longest == 0 {
+		return autoMoveTimeout(false, ""), nil
+	}
+	return longest, nil
 }
 
 // autoMoveTimeout is the per-move cap: 15s for a model that answers directly,

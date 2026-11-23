@@ -23,13 +23,13 @@ type preset struct {
 	MaxTokens   int
 
 	// Effort is the reasoning effort sent to the model: output_config.effort
-	// for the native Anthropic client ("" = the model's default).
+	// for the native Anthropic client, reasoning.effort for the Responses
+	// client ("" = the model's default).
 	Effort string
 
-	// OpenAI GPT-6 models: Chat Completions allows function calling only with
-	// reasoning_effort "none", and the output cap is max_completion_tokens.
-	ReasoningEffort     string
-	MaxCompletionTokens bool
+	// Responses selects OpenAI's native Responses API instead of Chat
+	// Completions, so the model's reasoning summary reaches the trace.
+	Responses bool
 }
 
 // presets verified against the providers' documentation on 2026-11-17:
@@ -38,8 +38,11 @@ type preset struct {
 //     endpoint returns neither). Temperature is left to the provider (Claude 5
 //     models reject other values) and the output cap leaves room for thinking.
 //   - gpt-6-luna: developers.openai.com/api/docs/models/gpt-6-luna lists the
-//     single id gpt-6-luna; its Chat Completions function calling needs
-//     reasoning_effort "none" (the model's default is "medium").
+//     single id gpt-6-luna and says function calling with reasoning needs the
+//     Responses API (Chat Completions supports it only at effort "none", which
+//     returns no reasoning). So it uses the Responses client at effort "low":
+//     reasoning.effort accepts none, low, medium (default), high, xhigh, max,
+//     and low is the smallest effort that still produces a reasoning summary.
 var presets = map[string]preset{
 	"haiku-5.5": {
 		Label: "Claude Haiku 5.5", Provider: "anthropic", BaseURL: "https://api.anthropic.com",
@@ -48,7 +51,7 @@ var presets = map[string]preset{
 	"luna-6": {
 		Label: "GPT-6 Luna", Provider: "openai", BaseURL: "https://api.openai.com/v1",
 		Model: "gpt-6-luna", KeyEnv: "OPENAI_API_KEY", Temperature: -1, MaxTokens: 4096,
-		ReasoningEffort: "none", MaxCompletionTokens: true,
+		Effort: "low", Responses: true,
 	},
 }
 
@@ -106,17 +109,15 @@ func (m *modelFlags) modelChoices(ids []string) ([]game.ModelChoice, error) {
 				}
 				if p.Provider == "anthropic" {
 					effort := p.Effort
-					if *m.effort != "" { // --effort tunes the Claude options; GPT-6 Luna must stay at "none"
+					if *m.effort != "" { // --effort tunes the Claude options; GPT-6 Luna keeps its own
 						effort = *m.effort
 					}
 					return llm.Instrument(newClient(p.Provider, p.BaseURL, key, effort, *m.llmTimeout))
 				}
-				c := llm.NewOpenAICompatible(p.BaseURL, key, p.Provider)
-				c.ReasoningEffort, c.MaxCompletionTokens = p.ReasoningEffort, p.MaxCompletionTokens
-				if *m.llmTimeout > 0 {
-					c.HTTP.Timeout = *m.llmTimeout
+				if p.Responses {
+					return llm.Instrument(newClient("openai-responses", p.BaseURL, key, p.Effort, *m.llmTimeout))
 				}
-				return llm.Instrument(c)
+				return llm.Instrument(newClient(p.Provider, p.BaseURL, key, p.Effort, *m.llmTimeout))
 			},
 		})
 	}
