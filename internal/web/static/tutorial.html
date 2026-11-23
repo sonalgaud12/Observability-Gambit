@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Observability Gambit · tutorial</title>
+<style>
+  html { scrollbar-gutter: stable; }
+  :root {
+    --bg: #0e1116; --panel: #161b22; --line: #262d36; --text: #e6edf3; --muted: #8b949e;
+    --light-sq: #d9d4c7; --dark-sq: #7a8b6f; --accent: #58a6ff;
+    --best: #3fb950; --good: #8fbc8f; --inaccuracy: #e3b341; --mistake: #f0883e; --blunder: #f85149;
+    --risk: #58a6ff; --risk2: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav.tabs a { color: var(--muted); text-decoration: none; font-weight: 600; padding: 5px 12px; border-radius: 6px; border: 1px solid transparent; }
+  nav.tabs a:hover { color: var(--text); border-color: var(--line); }
+  nav.tabs a[aria-current="page"] { color: var(--text); background: var(--panel); border-color: var(--line); }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); font-weight: 600; }
+  a.btn { display: inline-block; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 8px 14px; text-decoration: none; font-weight: 600; }
+  a.btn:hover { border-color: var(--accent); }
+  a.btn.primary { background: var(--accent); color: #0b1220; border-color: var(--accent); }
+  a.btn.off { opacity: .55; pointer-events: none; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+  .mock { background: #5a1e1e; color: #ffb3ad; }
+  .muted { color: var(--muted); }
+  code { background: #0b0f14; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+  kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; color: var(--muted); }
+
+  main { display: grid; grid-template-columns: min(560px, 100%) minmax(0, 1fr); gap: 24px; padding: 20px 24px; }
+  @media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 16px; } header { padding: 12px 16px; } }
+
+  #board { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); grid-template-rows: repeat(8, minmax(0, 1fr)); aspect-ratio: 1; width: 100%; container-type: inline-size; border-radius: 6px; overflow: hidden; box-shadow: 0 6px 30px #0008; }
+  .sq { position: relative; display: flex; align-items: center; justify-content: center; font-size: 9.5cqw; user-select: none; }
+  .sq.l { background: var(--light-sq); } .sq.d { background: var(--dark-sq); }
+  .sq.last::after { content: ""; position: absolute; inset: 0; background: #f7e36a66; }
+  .sq.best::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--best); border-radius: 4px; z-index: 2; }
+  .sq.blunder::after { background: #f8514988; }
+  .sq.emph::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--accent); border-radius: 4px; z-index: 2; animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) { .sq.emph::before { animation: none; } }
+  .pc { position: relative; z-index: 1; line-height: 1; }
+  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
+  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
+  .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
+  .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
+  #board.coords .coord { color: #0b1220; background: var(--accent); border-radius: 3px; padding: 0 4px; font-size: 12px; z-index: 3; }
+  .boardnote { margin: 10px 2px 0; font-size: 13px; color: var(--muted); }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; min-width: 0; overflow-wrap: anywhere; }
+  .stepno { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .6px; }
+  .panel h2 { margin: 4px 0 10px; font-size: 24px; line-height: 1.2; }
+  .panel p { margin: 0 0 10px; }
+  .panel ul { margin: 0 0 10px; padding-left: 20px; } .panel li { margin: 3px 0; }
+  .stepnav { display: flex; align-items: center; gap: 8px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .dots { display: flex; gap: 6px; margin: 0 auto; }
+  .dots button { width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 1px solid var(--muted); background: transparent; }
+  .dots button[aria-current="step"] { background: var(--accent); border-color: var(--accent); }
+  .dots button:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .tree { list-style: none; margin: 8px 0 12px; padding: 0; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .tree ul { list-style: none; margin: 0; padding-left: 18px; border-left: 1px solid var(--line); }
+  .tree li { margin: 0; padding: 3px 0; }
+  .tree .n { color: var(--text); font-weight: 700; }
+  .tree .t { color: var(--muted); }
+  .tree .err .n { color: var(--blunder); }
+  .tree .w { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--muted); font-size: 12.5px; display: block; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+  .chip { background: #0b0f14; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .chip b { color: var(--muted); font-weight: 500; margin-right: 4px; }
+  .chip.hot { border-color: var(--mistake); color: var(--mistake); }
+  .rowlabel { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin-top: 8px; }
+  dl.keys { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 8px 0 0; font-size: 14px; }
+  dl.keys dt { color: var(--muted); } dl.keys dd { margin: 0; }
+  .cls { font-size: 12px; padding: 2px 9px; border-radius: 999px; font-weight: 700; text-transform: uppercase; color: #0b1220; display: inline-block; }
+  .grades { display: grid; gap: 6px; margin: 8px 0 12px; }
+  .grades div { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .grades .cls { min-width: 96px; text-align: center; }
+  .callout { margin: 12px 0 0; padding: 10px 12px; border-radius: 8px; border: 1px dashed var(--line); }
+  .callout.alert { border-color: var(--blunder); background: #f851491a; }
+  #tl { width: 100%; height: auto; aspect-ratio: 600 / 200; background: #0b0f14; border: 1px solid var(--line); border-radius: 10px; }
+  #tl text { fill: var(--muted); font-size: 11px; }
+  .legend { display: flex; gap: 6px 16px; color: var(--muted); font-size: 13px; margin: 6px 2px 10px; flex-wrap: wrap; }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; background: currentColor; }
+  @media (max-width: 900px) { .keyhint { display: none; } .dots { gap: 4px; } .dots button { width: 22px; height: 22px; } }
+  .ctas { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>The Observability Gambit <span>· tutorial</span></h1>
+  <nav class="tabs" aria-label="Views">
+    <a href="index.html">Recorded games</a>
+    <a href="live.html" id="liveTab" hidden>Play the agent</a>
+    <a href="tutorial.html" aria-current="page">Tutorial</a>
+  </nav>
+  <span class="badge mock" title="The board and Stockfish grades are real; the telemetry and risk numbers are invented to show the idea.">Sample game · not a result</span>
+  <span class="muted keyhint" style="margin-left:auto;font-size:13px"><kbd>←</kbd><kbd>→</kbd> step</span>
+</header>
+
+<main>
+  <div>
+    <div id="board" aria-label="Chess board"></div>
+    <div class="boardnote" id="boardNote"></div>
+  </div>
+  <div class="panel" id="panel" aria-live="polite"></div>
+</main>
+
+<script type="application/json" id="sample-game">
+{
+ "name": "Sample game",
+ "agent_color": "white",
+ "model": "sample-model",
+ "opponent": "Stockfish",
+ "threshold": 0.5,
+ "start_fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+ "plies": [
+  {
+   "ply": 1,
+   "san": "e4",
+   "uci": "e2e4",
+   "fen_after": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+   "by_agent": true,
+   "agent": {
+    "move_number": 1,
+    "class": "best",
+    "best_move": "e4",
+    "eval_before_cp": 27,
+    "eval_after_cp": 27,
+    "win_chance_drop": 0,
+    "latency_ms": 1400,
+    "chat_calls": 1,
+    "input_tokens": 410,
+    "output_tokens": 38,
+    "tool_calls": 0,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.07,
+     "at_move": 0.06
+    }
+   }
+  },
+  {
+   "ply": 2,
+   "san": "e5",
+   "uci": "e7e5",
+   "fen_after": "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2",
+   "by_agent": false
+  },
+  {
+   "ply": 3,
+   "san": "Nf3",
+   "uci": "g1f3",
+   "fen_after": "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+   "by_agent": true,
+   "agent": {
+    "move_number": 2,
+    "class": "best",
+    "best_move": "Nf3",
+    "eval_before_cp": 39,
+    "eval_after_cp": 28,
+    "win_chance_drop": 0.02,
+    "latency_ms": 1650,
+    "chat_calls": 1,
+    "input_tokens": 455,
+    "output_tokens": 52,
+    "tool_calls": 0,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.08,
+     "at_move": 0.07
+    }
+   }
+  },
+  {
+   "ply": 4,
+   "san": "Nc6",
+   "uci": "b8c6",
+   "fen_after": "r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3",
+   "by_agent": false
+  },
+  {
+   "ply": 5,
+   "san": "Bc4",
+   "uci": "f1c4",
+   "fen_after": "r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3",
+   "by_agent": true,
+   "agent": {
+    "move_number": 3,
+    "class": "good",
+    "best_move": "Bb5",
+    "eval_before_cp": 34,
+    "eval_after_cp": 17,
+    "win_chance_drop": 0.031,
+    "latency_ms": 1900,
+    "chat_calls": 1,
+    "input_tokens": 520,
+    "output_tokens": 64,
+    "tool_calls": 0,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.09,
+     "at_move": 0.1
+    }
+   }
+  },
+  {
+   "ply": 6,
+   "san": "Nf6",
+   "uci": "g8f6",
+   "fen_after": "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4",
+   "by_agent": false
+  },
+  {
+   "ply": 7,
+   "san": "d3",
+   "uci": "d2d3",
+   "fen_after": "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R b KQkq - 0 4",
+   "by_agent": true,
+   "agent": {
+    "move_number": 4,
+    "class": "best",
+    "best_move": "d3",
+    "eval_before_cp": 20,
+    "eval_after_cp": 17,
+    "win_chance_drop": 0.006,
+    "latency_ms": 2300,
+    "chat_calls": 2,
+    "input_tokens": 1210,
+    "output_tokens": 96,
+    "tool_calls": 1,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.11,
+     "at_move": 0.12
+    }
+   }
+  },
+  {
+   "ply": 8,
+   "san": "Bc5",
+   "uci": "f8c5",
+   "fen_after": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQK2R w KQkq - 1 5",
+   "by_agent": false
+  },
+  {
+   "ply": 9,
+   "san": "O-O",
+   "uci": "e1g1",
+   "fen_after": "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 b kq - 2 5",
+   "by_agent": true,
+   "agent": {
+    "move_number": 5,
+    "class": "good",
+    "best_move": "Nc3",
+    "eval_before_cp": 12,
+    "eval_after_cp": 23,
+    "win_chance_drop": 0,
+    "latency_ms": 2400,
+    "chat_calls": 2,
+    "input_tokens": 1380,
+    "output_tokens": 110,
+    "tool_calls": 1,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.16,
+     "at_move": 0.19
+    }
+   }
+  },
+  {
+   "ply": 10,
+   "san": "d6",
+   "uci": "d7d6",
+   "fen_after": "r1bqk2r/ppp2ppp/2np1n2/2b1p3/2B1P3/3P1N2/PPP2PPP/RNBQ1RK1 w kq - 0 6",
+   "by_agent": false
+  },
+  {
+   "ply": 11,
+   "san": "Bg5",
+   "uci": "c1g5",
+   "fen_after": "r1bqk2r/ppp2ppp/2np1n2/2b1p1B1/2B1P3/3P1N2/PPP2PPP/RN1Q1RK1 b kq - 1 6",
+   "by_agent": true,
+   "agent": {
+    "move_number": 6,
+    "class": "good",
+    "best_move": "c3",
+    "eval_before_cp": 23,
+    "eval_after_cp": -19,
+    "win_chance_drop": 0.077,
+    "latency_ms": 3100,
+    "chat_calls": 2,
+    "input_tokens": 1620,
+    "output_tokens": 150,
+    "tool_calls": 1,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.27,
+     "at_move": 0.31
+    }
+   }
+  },
+  {
+   "ply": 12,
+   "san": "h6",
+   "uci": "h7h6",
+   "fen_after": "r1bqk2r/ppp2pp1/2np1n1p/2b1p1B1/2B1P3/3P1N2/PPP2PPP/RN1Q1RK1 w kq - 0 7",
+   "by_agent": false
+  },
+  {
+   "ply": 13,
+   "san": "Bh4",
+   "uci": "g5h4",
+   "fen_after": "r1bqk2r/ppp2pp1/2np1n1p/2b1p3/2B1P2B/3P1N2/PPP2PPP/RN1Q1RK1 b kq - 1 7",
+   "by_agent": true,
+   "agent": {
+    "move_number": 7,
+    "class": "good",
+    "best_move": "Bd2",
+    "eval_before_cp": -23,
+    "eval_after_cp": -11,
+    "win_chance_drop": 0,
+    "latency_ms": 3900,
+    "chat_calls": 2,
+    "input_tokens": 1890,
+    "output_tokens": 210,
+    "tool_calls": 1,
+    "illegal_attempts": 0,
+    "risk": {
+     "forecast": 0.41,
+     "at_move": 0.38
+    }
+   }
+  },
+  {
+   "ply": 14,
+   "san": "g5",
+   "uci": "g7g5",
+   "fen_after": "r1bqk2r/ppp2p2/2np1n1p/2b1p1p1/2B1P2B/3P1N2/PPP2PPP/RN1Q1RK1 w kq g6 0 8",
+   "by_agent": false
+  },
+  {
+   "ply": 15,
+   "san": "Nxg5",
+   "uci": "f3g5",
+   "fen_after": "r1bqk2r/ppp2p2/2np1n1p/2b1p1N1/2B1P2B/3P4/PPP2PPP/RN1Q1RK1 b kq - 0 8",
+   "by_agent": true,
+   "agent": {
+    "move_number": 8,
+    "class": "blunder",
+    "best_move": "Bg3",
+    "eval_before_cp": -17,
+    "eval_after_cp": -587,
+    "win_chance_drop": 0.762,
+    "latency_ms": 6800,
+    "chat_calls": 3,
+    "input_tokens": 3350,
+    "output_tokens": 540,
+    "tool_calls": 1,
+    "illegal_attempts": 1,
+    "risk": {
+     "forecast": 0.62,
+     "at_move": 0.81
+    }
+   }
+  },
+  {
+   "ply": 16,
+   "san": "hxg5",
+   "uci": "h6g5",
+   "fen_after": "r1bqk2r/ppp2p2/2np1n2/2b1p1p1/2B1P2B/3P4/PPP2PPP/RN1Q1RK1 w kq - 0 9",
+   "by_agent": false
+  }
+ ]
+}
+</script>
+
+<script>
+const SAMPLE = JSON.parse(document.getElementById("sample-game").textContent);
+const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
+const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let live = null; // /api/config's live block, when a server with human mode is behind this page
+
+const plies = SAMPLE.plies;
+const agentMove = (n) => plies.find(p => p.by_agent && p.agent.move_number === n).agent;
+const sanOf = (a) => plies.find(p => p.by_agent && p.agent === a).san;
+const fenAt = (i) => i === 0 ? SAMPLE.start_fen : plies[i - 1].fen_after;
+const fmtCP = (cp) => (cp >= 0 ? "+" : "") + (cp / 100).toFixed(1);
+
+function expand(row) { const out = []; for (const ch of row) { if (/\d/.test(ch)) out.push(...".".repeat(+ch)); else out.push(ch); } return out; }
+
+// ply: which position to draw. emph: squares to ring in blue. coords: spotlight the a-h and 1-8 labels.
+// best: the engine's preferred squares, drawn in green. last: use the ply's last-move highlight.
+function renderBoard({ ply, emph = [], coords = false, best = [], blunder = false }) {
+  const rows = fenAt(ply).split(" ")[0].split("/");
+  const cur = ply > 0 ? plies[ply - 1] : null;
+  const hl = cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [];
+  const html = [];
+  for (let r = 0; r < 8; r++) {
+    const cells = expand(rows[r]);
+    for (let f = 0; f < 8; f++) {
+      const sq = "abcdefgh"[f] + (8 - r);
+      const c = cells[f];
+      const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
+      if (hl.includes(sq)) { cls.push("last"); if (blunder) cls.push("blunder"); }
+      if (best.includes(sq)) cls.push("best");
+      if (emph.includes(sq)) cls.push("emph");
+      let inner = "";
+      if (f === 0) inner += `<span class="coord">${8 - r}</span>`;
+      if (r === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
+      if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      html.push(`<div class="${cls.join(" ")}" title="${sq}">${inner}</div>`);
+    }
+  }
+  const b = $("#board");
+  b.classList.toggle("coords", coords);
+  b.innerHTML = html.join("");
+}
+
+const chip = (k, v, hot) => `<span class="chip ${hot ? "hot" : ""}"><b>${k}</b>${v}</span>`;
+function chips(a) {
+  return `<div class="chips">${chip("latency", (a.latency_ms / 1000).toFixed(2) + "s")}${chip("chat calls", a.chat_calls, a.chat_calls > 1)}
+    ${chip("in tok", a.input_tokens)}${chip("out tok", a.output_tokens)}${chip("tool calls", a.tool_calls)}
+    ${chip("illegal tries", a.illegal_attempts, a.illegal_attempts > 0)}</div>`;
+}
+
+function timeline() {
+  const W = 600, H = 200, L = 40, R = 14, T = 14, B = 46;
+  const ag = plies.filter(p => p.by_agent).map(p => p.agent);
+  const x = n => L + (W - L - R) * (n - 1) / (ag.length - 1);
+  const y = v => T + (H - T - B) * (1 - v);
+  let s = "";
+  for (const v of [0, .25, .5, .75, 1]) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="6" y="${y(v) + 4}">${v * 100}%</text>`;
+  s += `<line x1="${L}" x2="${W - R}" y1="${y(SAMPLE.threshold)}" y2="${y(SAMPLE.threshold)}" stroke="var(--muted)" stroke-dasharray="2 4"/>`;
+  const line = (name, color, dash) => `<polyline fill="none" stroke="${color}" stroke-width="2.2" ${dash ? 'stroke-dasharray="5 4"' : ""} points="${ag.map(a => x(a.move_number) + "," + y(a.risk[name])).join(" ")}"/>`;
+  s += line("at_move", "var(--risk2)", true) + line("forecast", "var(--risk)", false);
+  for (const a of ag) {
+    const big = a.class === "blunder" || a.class === "mistake";
+    s += `<circle cx="${x(a.move_number)}" cy="${H - B + 16}" r="${big ? 6 : 3.5}" fill="${CLASS_COLOR[a.class]}"><title>${a.move_number}. ${esc(sanOf(a))} · ${a.class}</title></circle><text x="${x(a.move_number) - 3}" y="${H - 6}">${a.move_number}</text>`;
+  }
+  const last = ag[ag.length - 1];
+  s += `<circle cx="${x(last.move_number)}" cy="${y(last.risk.forecast)}" r="5" fill="var(--risk)" stroke="var(--text)" stroke-width="1.5"/>`;
+  return `<svg id="tl" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sample risk by move: the forecast crosses the alert threshold at move 8, the blunder">${s}</svg>`;
+}
+
+const STEPS = [
+  {
+    title: "What you are watching",
+    board: { ply: 0 },
+    note: "The starting position. Everything here is a built-in sample game, so this tutorial works offline.",
+    html: () => `
+      <p>An AI agent, a language model, is playing chess against <b>Stockfish</b>, a very strong chess program.</p>
+      <p>Every move the agent makes is recorded as an <b>OpenTelemetry trace</b>: how long it took, how many tokens it used, whether it tried an illegal move.</p>
+      <p>After each move, a second Stockfish <b>grades</b> it. That gives observability something it rarely has: an objective answer to “was that a good decision?”</p>
+      <p>The question behind the talk: <b>can the traces show a blunder coming?</b></p>
+      <p class="muted">Two ways to see it: <b>Recorded games</b> replays finished games. <b>Play the agent</b> (human mode) lets you take the other side, while the agent is traced and graded in the same way.</p>`,
+  },
+  {
+    title: "Reading the board",
+    board: { ply: 3, coords: true, emph: ["f3"] },
+    note: "After 1. e4 e5 2. Nf3. Yellow marks the last move. Hover a square to see its name.",
+    html: () => `
+      <p>Columns are the <b>files</b>, <b>a–h</b>, left to right. Rows are the <b>ranks</b>, <b>1–8</b>, bottom to top. The small labels sit along the left edge and the bottom, and White starts at the bottom.</p>
+      <p>A square’s name is its file then its rank. The ringed square is <b>f3</b>.</p>
+      <p>Moves are written in short notation: <code>Nf3</code> means a knight moved to f3. <code>N</code> is knight, <code>B</code> bishop, <code>R</code> rook, <code>Q</code> queen, <code>K</code> king, and no letter means a pawn. An <code>x</code> is a capture, and <code>O-O</code> is castling.</p>
+      <p class="muted">When the agent plays Black, the board is flipped so its side is at the bottom.</p>`,
+  },
+  {
+    title: "One move, one trace",
+    board: { ply: 14 },
+    note: "The agent is about to be asked for its 8th move.",
+    html: () => `
+      <p>Each time the agent moves, one trace is recorded. This is its 8th move in the sample.</p>
+      <ul class="tree" aria-label="Trace for move 8">
+        <li><span class="n">chess.move</span> <span class="t">root · 7.9 s</span><span class="w">The whole move: ply, FEN, legal-move count, and later the grade.</span>
+          <ul>
+            <li><span class="n">invoke_agent chess-agent</span> <span class="t">6.8 s</span><span class="w">The decision. Its duration is the latency.</span>
+              <ul>
+                <li><span class="n">chat sample-model</span> <span class="t">2.1 s</span><span class="w">One model call: tokens in and out, finish reason.</span></li>
+                <li><span class="n">execute_tool legal_moves</span> <span class="t">3 ms</span><span class="w">The model asked for a tool.</span></li>
+                <li><span class="n">chat sample-model</span> <span class="t">2.4 s</span></li>
+                <li class="err"><span class="n">chess.validate_move</span> <span class="t">illegal_move</span><span class="w">The model proposed <code>Nxg6</code>, which is not legal here.</span></li>
+                <li><span class="n">chat sample-model</span> <span class="t">2.3 s</span><span class="w">The retry.</span></li>
+                <li><span class="n">chess.validate_move</span> <span class="t">legal</span><span class="w">Candidate <code>Nxg5</code> is legal, so it is played.</span></li>
+              </ul>
+            </li>
+            <li><span class="n">chess.evaluate</span> <span class="t">1.1 s</span><span class="w">Stockfish’s grade. A sibling of the decision, so its time is not in the latency.</span></li>
+          </ul>
+        </li>
+      </ul>
+      <p class="muted">The <code>chat</code>, <code>invoke_agent</code> and <code>execute_tool</code> spans use the OpenTelemetry GenAI conventions (<code>gen_ai.*</code>). Names starting <code>chess.</code> and <code>gambit.</code> are this project’s own. Timings in this sample are invented.</p>`,
+  },
+  {
+    title: "The numbers on a move",
+    board: { ply: 14 },
+    note: "Same position as the last step. Orange chips mark retries and extra calls.",
+    html: () => {
+      const a3 = agentMove(3), a8 = agentMove(8);
+      return `
+      <p>The replay turns each trace into a few numbers. Compare an early move with the 8th:</p>
+      <div class="rowlabel">Move 3</div>${chips(a3)}
+      <div class="rowlabel">Move 8</div>${chips(a8)}
+      <dl class="keys">
+        <dt>latency</dt><dd>How long the decision took, the <code>invoke_agent</code> duration.</dd>
+        <dt>chat / tool calls</dt><dd>Model calls and tool calls in one decision: <code>gambit.chat_calls</code>, <code>gambit.tool_calls</code>.</dd>
+        <dt>in / out tok</dt><dd>Tokens summed over every call: <code>gen_ai.usage.input_tokens</code>, <code>gen_ai.usage.output_tokens</code>.</dd>
+        <dt>illegal tries</dt><dd>Moves proposed that were not legal: <code>chess.illegal_attempts</code>. After three failed retries the agent plays a random legal move and sets <code>chess.fallback</code>.</dd>
+      </dl>`;
+    },
+  },
+  {
+    title: "How a blunder is graded",
+    board: { ply: 15, blunder: true, best: ["g3"] },
+    note: "Red is the move that was played. The green ring is where Stockfish would have gone: Bg3.",
+    html: () => {
+      const a = agentMove(8);
+      return `
+      <p>After the move, Stockfish scores the position before and after, at a fixed depth. The grade is how much the <b>chance of winning</b> dropped.</p>
+      <div class="grades">
+        <div><span class="cls" style="background:var(--best)">best</span><span class="muted">matched Stockfish’s top move</span></div>
+        <div><span class="cls" style="background:var(--good)">good</span><span class="muted">under 5 points lost</span></div>
+        <div><span class="cls" style="background:var(--inaccuracy)">inaccuracy</span><span class="muted">5 points or more</span></div>
+        <div><span class="cls" style="background:var(--mistake)">mistake</span><span class="muted">10 points or more</span></div>
+        <div><span class="cls" style="background:var(--blunder)">blunder</span><span class="muted">15 points or more</span></div>
+      </div>
+      <p><b>Move 8, Nxg5:</b> the evaluation went from ${fmtCP(a.eval_before_cp)} to ${fmtCP(a.eval_after_cp)} and the chance of winning dropped about ${(a.win_chance_drop * 50).toFixed(0)} points. That is a <span class="cls" style="background:var(--blunder)">blunder</span>. The knight takes a pawn and is then captured by the h-pawn (<code>hxg5</code>).</p>
+      <p class="muted">The grade is stored on the trace as <code>chess.move.class</code>, with the evaluation next to it, and it is also sent as a <code>gen_ai.evaluation.result</code> event.</p>`;
+    },
+  },
+  {
+    title: "Predicting a blunder from telemetry",
+    board: { ply: 14 },
+    note: "The agent is about to be asked for move 8.",
+    html: () => {
+      const a = agentMove(8);
+      return `
+      <p>The grade only exists <i>after</i> the move. The talk asks whether the traces give a warning earlier. A small model scores the risk of a blunder from trace features such as latency, tokens, retries and tool calls:</p>
+      <ul>
+        <li><b style="color:var(--risk)">Forecast</b> uses the position and the traces of the <i>previous</i> moves only. It can warn before the agent is even asked.</li>
+        <li><b style="color:var(--risk2)">At-move</b> also sees this move’s own trace, so it can veto a move before it is played.</li>
+      </ul>
+      ${timeline()}
+      <div class="legend"><span style="color:var(--risk)">Forecast</span><span style="color:var(--risk2)">At-move</span><span style="color:var(--muted)">Alert threshold</span></div>
+      <div class="callout alert"><b>Incoming: agent’s move 8</b><div style="font-size:20px;font-weight:700;margin-top:4px;color:var(--blunder)">${(a.risk.forecast * 100).toFixed(0)}% risk · warning before it is requested</div></div>
+      <p class="muted" style="margin-top:10px">These risk numbers are invented for the sample. They show what the replay draws; they are not a result.</p>`;
+    },
+  },
+  {
+    title: "Try it yourself",
+    board: { ply: 16 },
+    note: "The sample game after 8… hxg5.",
+    html: () => `
+      <p>Now try the real thing:</p>
+      <div class="ctas">
+        <a class="btn primary" href="index.html">Recorded games ▸</a>
+        <a class="btn ${live ? "primary" : "off"}" href="live.html" ${live ? "" : 'aria-disabled="true" tabindex="-1"'}>Play the agent ▸</a>
+      </div>
+      <p class="muted">${live ? "Human mode is on here: you play one side and the agent plays the other." : "Human mode is off on this server. Start it with <code>gambit serve --live</code> to play the agent."}</p>
+      <ul>
+        <li>In a replay, press <kbd>b</kbd> to jump to the next blunder, or click a dot on the timeline.</li>
+        <li>Step with <kbd>←</kbd> <kbd>→</kbd> and watch the risk bars before each agent move.</li>
+        <li><b>Open trace ↗</b> jumps from a move into its full trace.</li>
+      </ul>`,
+  },
+];
+
+let step = 0;
+
+function render() {
+  const s = STEPS[step];
+  renderBoard(s.board);
+  $("#boardNote").textContent = s.note || "";
+  const dots = STEPS.map((_, i) => `<button data-i="${i}" aria-label="Step ${i + 1}: ${esc(STEPS[i].title)}" ${i === step ? 'aria-current="step"' : ""}></button>`).join("");
+  $("#panel").innerHTML = `<div class="stepno">Step ${step + 1} of ${STEPS.length}</div><h2>${esc(s.title)}</h2>${s.html()}
+    <div class="stepnav"><button id="back" ${step === 0 ? "disabled" : ""}>◀ Back</button><div class="dots">${dots}</div>
+    <button id="next" class="primary" ${step === STEPS.length - 1 ? "disabled" : ""}>Next ▶</button></div>`;
+  $("#back").onclick = () => go(step - 1);
+  $("#next").onclick = () => go(step + 1);
+  document.querySelectorAll(".dots button").forEach(b => b.onclick = () => go(+b.dataset.i));
+  const u = new URL(location); u.searchParams.set("step", step + 1); history.replaceState(null, "", u);
+}
+
+function go(n) { step = Math.max(0, Math.min(STEPS.length - 1, n)); render(); }
+
+document.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "ArrowRight") go(step + 1);
+  else if (e.key === "ArrowLeft") go(step - 1);
+});
+
+async function init() {
+  const q = Number(new URLSearchParams(location.search).get("step"));
+  if (q >= 1 && q <= STEPS.length) step = q - 1;
+  render();
+  // Only the "Play the agent" tab and the last step depend on a server; the rest is static.
+  try {
+    const cfg = await (await fetch("api/config")).json();
+    live = cfg.live || null;
+  } catch (e) { live = null; }
+  $("#liveTab").hidden = !live;
+  render();
+}
+init();
+</script>
+</body>
+</html>
