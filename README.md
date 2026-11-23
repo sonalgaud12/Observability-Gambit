@@ -145,10 +145,9 @@ the effort you will use on stage and adjust. The trade-off:
   the human waits longer each move, and a model that hangs takes the whole cap to
   be noticed. The live clock (amber, then red) is drawn against the cap, so a 60s
   cap looks like a slow model, not a stuck one.
-- The local Collector's tail sampler waits `decision_wait` (15s) for a trace. A move
-  longer than that can reach Jaeger incomplete: raise `decision_wait` with the cap.
-  The Grafana Cloud collector (`collector/cloud.yaml`, used by the shared
-  deployment) has no tail sampling, so it is not affected.
+- Collector sampling is no longer a limit: every trace goes to Tempo (see "Trace
+  links and the Collector"), and the "Open trace" link is offered after the move is
+  graded, so a long move's trace is complete by then.
 - The coach (one comment per human move) has its own fixed 25s cap per call. On
   Claude it ignores `--effort`: it always asks for `low` effort with a 2048-token
   cap so thinking cannot crowd out its few sentences.
