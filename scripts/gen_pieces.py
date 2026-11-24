@@ -4,7 +4,8 @@
 Original artwork, drawn from scratch: every piece is built from observability shapes.
   king   = root-span stack topped by a cross       queen  = service-graph hub with five radiating nodes
   rook   = stacked metric tower                    bishop = diagonal trace line with a diamond head
-  knight = L-shaped jump arrow                     pawn   = a single dot-span
+  knight = waterfall of two span bars stepping up     pawn   = a single dot-span
+           into a horse-profile head (the L jump)
 Sides are told apart without colour: white is a pale fill with a dark outline and cyan bars,
 black is a dark fill with a light halo and amber bars.
 
@@ -50,8 +51,11 @@ T = {
           [("r", 34, 42, 32, 6, 3), ("r", 34, 54, 32, 6, 3), ("r", 34, 66, 32, 6, 3)]),
     "B": ([("p", "50,8 62,22 50,36 38,22"), ("p", "42,36 58,36 70,78 30,78"), ("r", 24, 78, 52, 8, 4), BASE],
           [("p", "34,56 66,38 66,45 34,63")]),
-    "N": ([("d", "M30 82 L30 46 Q30 22 54 22 L66 22 L66 12 L90 32 L66 52 L66 42 L54 42 L54 82 Z"), BASE, ("c", 44, 31, 0.1)],
-          [("c", 43, 34, 4.5)]),
+    # Knight: the L jump drawn as a trace. Two span bars stack up the neck (two along), then the head juts
+    # sideways (one across), like a waterfall whose child span steps out. The pointed horse profile with an
+    # ear and an eye node keeps it apart from the bishop's straight diagonal at 24 px.
+    "N": ([("r", 28, 60, 26, 14, 5), ("r", 28, 40, 26, 14, 5), ("p", "42,14 52,26 78,38 88,52 80,60 62,52 54,54 42,50"), BASE],
+          [("r", 32, 64, 18, 5, 2.5), ("r", 32, 44, 18, 5, 2.5), ("c", 64, 36, 4.5)]),
     # Queen: a wide service-graph hub. Five separate nodes on an arc, each tied to the hub by a span link,
     # so at 24 px it reads as a spiky crown that is clearly wider than the king's narrow tower.
     "Q": ([("l", 50, 54, 12, 30, 5), ("l", 50, 54, 31, 15, 5), ("l", 50, 54, 50, 9, 5), ("l", 50, 54, 69, 15, 5), ("l", 50, 54, 88, 30, 5),

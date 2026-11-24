@@ -93,6 +93,24 @@ func TestEveryPieceAndColourRenders(t *testing.T) {
 	}
 }
 
+// The knight is drawn as a trace (span bars, a head and an eye node), not as the old
+// single-path arrow, and its accent marks stay on top of the outline for both sides.
+func TestKnightIsTraceStyle(t *testing.T) {
+	srv := replayOnly(t)
+	for _, c := range pieceColors {
+		_, body := svgFile(t, srv.URL, c+"N.svg")
+		if strings.Contains(body, "<path") {
+			t.Errorf("%sN: still the single-path arrow knight", c)
+		}
+		if n := strings.Count(body, "<rect"); n < 6 { // two span bars and the base, each as halo + fill
+			t.Errorf("%sN: %d rects, want span bars stacked on a base", c, n)
+		}
+		if !strings.Contains(body, "<polygon") || !strings.Contains(body, "<circle") {
+			t.Errorf("%sN: want a polygon head with an eye node", c)
+		}
+	}
+}
+
 // runOG executes the served og.js in node and returns the JSON the script prints.
 func runOG(t *testing.T, base, script string, out any) {
 	t.Helper()
