@@ -39,7 +39,7 @@
     const ja = lang === "ja";
     const rows = ["k", "q", "r", "b", "n", "p"].map((ch) => {
       const p = PIECES[ch];
-      return `<tr><td><span class="pcg">${{ k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" }[ch]}︎</span></td><td>${p.en}</td><td lang="ja">${p.ja}</td><td>${p.letter ? `<code>${p.letter}</code>` : "–"}</td><td>${p.count}</td></tr>`;
+      return `<tr><td><span class="pcg">${OG.img("w", ch, "pimg")}</span></td><td>${p.en}</td><td lang="ja">${p.ja}</td><td>${p.letter ? `<code>${p.letter}</code>` : "–"}</td><td>${p.count}</td></tr>`;
     }).join("");
     return `<table class="ptab"><thead><tr><th></th><th>${ja ? "英語" : "English"}</th><th>${ja ? "日本語" : "日本語"}</th><th>${ja ? "記号" : "Letter"}</th><th>${ja ? "数" : "Each side"}</th></tr></thead><tbody>${rows}</tbody></table>`;
   };
