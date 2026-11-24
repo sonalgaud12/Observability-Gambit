@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
+// og.js is a plain browser script; the page loads it before tutorial-text.js.
+globalThis.OG = new Function(readFileSync(new URL("../static/og.js", import.meta.url), "utf8") + "; return OG;")();
 const Core = require("../static/tutorial-core.js");
 const { TEXT, PIECES, pieceLabel } = require("../static/tutorial-text.js");
 

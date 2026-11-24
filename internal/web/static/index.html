@@ -34,9 +34,6 @@
   .sq.last::after { content: ""; position: absolute; inset: 0; background: #f7e36a66; }
   .sq.best::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--best); border-radius: 4px; z-index: 2; }
   .sq.blunder::after { background: #f8514988; }
-  .pc { position: relative; z-index: 1; line-height: 1; }
-  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
-  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
   .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
   .controls { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
@@ -71,6 +68,8 @@
   a.trace:hover { text-decoration: underline; }
   kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; color: var(--muted); }
 </style>
+<link rel="stylesheet" href="og.css">
+<script src="og.js"></script>
 </head>
 <body>
 <header>
@@ -116,7 +115,6 @@
 
 <script>
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
-const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const $ = (s) => document.querySelector(s);
 let cfg = {}, data = null, idx = 0, timer = null, flip = false;
 
@@ -156,6 +154,7 @@ function renderBoard() {
   const cur = idx > 0 ? data.plies[idx - 1] : null;
   const hl = cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [];
   const isBlunder = cur && cur.agent && cur.agent.class === "blunder";
+  const checkSq = cur ? OG.checkSquare(fenAt(idx), cur.san) : null;
   // Show the engine's preferred move on the board when the agent went wrong.
   let bestSq = [];
   if (cur && cur.agent && ["mistake", "blunder"].includes(cur.agent.class) && cur.agent.best_move) {
@@ -170,16 +169,18 @@ function renderBoard() {
       const sq = "abcdefgh"[f] + (8 - r);
       const c = cells[f];
       const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
-      if (hl.includes(sq)) cls.push("last"), isBlunder && cls.push("blunder");
+      if (hl.includes(sq)) cls.push("last");
+      if (isBlunder && sq === cur.uci.slice(2, 4)) cls.push("blunder");
+      if (sq === checkSq) cls.push("check");
       if (bestSq.includes(sq)) cls.push("best");
       let inner = "";
       if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
       if (vr === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
-      if (c !== ".") {
-        const white = c === c.toUpperCase();
-        inner += `<span class="pc ${white ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
-      }
-      html.push(`<div class="${cls.join(" ")}" title="${sq}">${inner}</div>`);
+      if (c !== ".") inner += OG.pc(c);
+      if (cls.includes("blunder")) inner += OG.tag("BLUNDER", "bot");
+      if (cls.includes("check")) inner += OG.tag("CHECK", "top");
+      const name = c === "." ? sq : `${OG.label(c)} on ${sq}`;
+      html.push(`<div class="${cls.join(" ")}" title="${name}" aria-label="${name}">${inner}</div>`);
     }
   }
   $("#board").innerHTML = html.join("");
@@ -220,7 +221,7 @@ function renderPanel() {
   } else if (cur.agent) {
     const a = cur.agent;
     html += `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${esc(a.san)}</div>
-      <span class="cls" style="background:${CLASS_COLOR[a.class]}">${a.class}</span>
+      <span class="cls" data-g="${a.class}" style="background:${CLASS_COLOR[a.class]}">${a.class}</span>
       <span class="who">agent · ${esc(a.model)}</span><span style="margin-left:auto">${traceLink(a.trace_id)}</span></div>`;
     if (["mistake", "blunder", "inaccuracy"].includes(a.class)) {
       html += `<p class="muted" style="margin:6px 0 0">Engine preferred <b style="color:var(--text)">${esc(a.best_move)}</b> · win chance dropped ${(a.win_chance_drop * 50).toFixed(0)} points · eval ${fmtCP(a.eval_before_cp)} → ${fmtCP(a.eval_after_cp)}</p>`;
@@ -273,7 +274,12 @@ function renderTimeline() {
   s += line("at_move", "var(--risk2)", true) + line("forecast", "var(--risk)", false);
   for (const a of ag) {
     const big = a.class === "blunder" || a.class === "mistake";
-    s += `<circle cx="${x(a.move_number)}" cy="${H - B + 16}" r="${big ? 6 : 3.5}" fill="${CLASS_COLOR[a.class]}" style="cursor:pointer" data-ply="${a.ply}"><title>${a.move_number}. ${esc(a.san)} · ${a.class}</title></circle>`;
+    // Shape as well as colour: blunder = diamond, mistake = triangle, the rest = dots.
+    const cx = x(a.move_number), cy = H - B + 16, r = big ? 7 : 3.5, at = `fill="${CLASS_COLOR[a.class]}" style="cursor:pointer" data-ply="${a.ply}"`;
+    const title = `<title>${a.move_number}. ${esc(a.san)} · ${a.class}</title>`;
+    s += a.class === "blunder" ? `<polygon points="${cx},${cy - r - 1} ${cx + r + 1},${cy} ${cx},${cy + r + 1} ${cx - r - 1},${cy}" ${at}>${title}</polygon>`
+      : a.class === "mistake" ? `<polygon points="${cx},${cy - r} ${cx + r},${cy + r * .8} ${cx - r},${cy + r * .8}" ${at}>${title}</polygon>`
+      : `<circle cx="${cx}" cy="${cy}" r="${r}" ${at}>${title}</circle>`;
   }
   const step = Math.max(1, Math.ceil((maxN - minN) / 15));
   for (let n = minN; n <= maxN; n += step) s += `<text x="${x(n) - 6}" y="${H - 6}">${n}</text>`;

@@ -47,9 +47,6 @@
   .sq.emph::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--accent); border-radius: 4px; z-index: 2; animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .3; } }
   @media (prefers-reduced-motion: reduce) { .sq.emph::before { animation: none; } }
-  .pc { position: relative; z-index: 1; line-height: 1; }
-  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
-  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
   .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
   #board.coords .coord { color: #0b1220; background: var(--accent); border-radius: 3px; padding: 0 4px; font-size: 12px; z-index: 3; }
@@ -120,6 +117,7 @@
   .ptab th { color: var(--muted); font-weight: 500; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
   .ptab th, .ptab td { padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); }
   .pcg { font-size: 24px; line-height: 1; }
+  .pcg .pimg { width: 26px; height: 26px; vertical-align: middle; }
   .lessontools { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); display: grid; gap: 10px; }
   .exbtns { display: flex; gap: 6px; flex-wrap: wrap; }
   .exbtns button[aria-pressed="true"] { border-color: var(--accent); background: #58a6ff1a; }
@@ -139,6 +137,8 @@
   .stepnav .dots { order: 3; width: 100%; justify-content: center; flex-wrap: wrap; margin: 6px 0 0; }
   .stepnav #next { margin-left: auto; }
 </style>
+<link rel="stylesheet" href="og.css">
+<script src="og.js"></script>
 </head>
 <body>
 <header>
@@ -466,7 +466,6 @@ const { TEXT, pieceLabel, pieceShort } = TutorialText;
 const SAMPLE = JSON.parse(document.getElementById("sample-game").textContent);
 const LESSONS = JSON.parse(document.getElementById("chess-lessons").textContent).positions;
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
-const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => (k in v ? v[k] : "{" + k + "}"));
@@ -545,11 +544,11 @@ function drawBoard({ fen, coords = false, sel = null, targets = [], check = "", 
       const sq = "abcdefgh"[f] + (8 - r);
       const c = cells[r * 8 + f];
       const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
-      if (last.includes(sq)) { cls.push("last"); if (blunder) cls.push("blunder"); }
+      if (last.includes(sq)) { cls.push("last"); if (blunder && last[1] === sq) cls.push("blunder"); }
       if (best.includes(sq)) cls.push("best");
       if (emph.includes(sq)) cls.push("emph");
       if (sel === sq) cls.push("sel");
-      if (check === sq) cls.push("chk");
+      if (check === sq) cls.push("chk", "check");
       if (danger.includes(sq)) cls.push("danger");
       const tm = tmap[sq];
       if (tm) cls.push("tgt", tm.capture ? "cap" : tm.kind !== "move" ? "sp" : "m");
@@ -558,7 +557,9 @@ function drawBoard({ fen, coords = false, sel = null, targets = [], check = "", 
       let inner = "";
       if (f === 0) inner += `<span class="coord">${8 - r}</span>`;
       if (r === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
-      if (c) inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      if (c) inner += OG.pc(c);
+      if (blunder && last[1] === sq) inner += OG.tag("BLUNDER", "bot");
+      if (check === sq) inner += OG.tag("CHECK", "top");
       const label = c ? `${sq}, ${pieceName(c)}` : sq;
       html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" title="${sq}" aria-label="${esc(label)}" ${lesson && (tm || (c && sel !== null)) ? 'role="button" tabindex="0"' : ""}>${inner}</div>`);
     }
@@ -583,7 +584,7 @@ function renderBoard() {
   } else {
     const b = s.board;
     const cur = b.ply > 0 ? plies[b.ply - 1] : null;
-    drawBoard({ fen: fenAt(b.ply), coords: !!b.coords, emph: b.emph || [], best: b.best || [], blunder: !!b.blunder, last: cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [] });
+    drawBoard({ fen: fenAt(b.ply), coords: !!b.coords, emph: b.emph || [], best: b.best || [], blunder: !!b.blunder, last: cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [], check: cur ? (OG.checkSquare(fenAt(b.ply), cur.san) || "") : "" });
   }
 }
 
@@ -632,7 +633,7 @@ function lessonTools(s) {
     if (pos.check) key.push(`<span><i class="k-chk"></i>${u.legendCheck}</span>`);
     h += `<div class="key">${key.join("")}</div>`;
     if (L.promo) {
-      h += `<div class="promo"><span>${u.promoteTo}</span>${["q", "r", "b", "n"].map(p => `<button type="button" data-promo="${p}">${GLYPH[p]}︎ ${esc(pieceName(p).split(" (")[0].replace(/^(White|Black|白の|黒の) ?/i, ""))}</button>`).join("")}</div>`;
+      h += `<div class="promo"><span>${u.promoteTo}</span>${["q", "r", "b", "n"].map(p => `<button type="button" data-promo="${p}"><span class="pcg">${OG.img(Core.sideToMove(L.after || pos.fen), p, "pimg")}</span> ${esc(pieceName(p).split(" (")[0].replace(/^(White|Black|白の|黒の) ?/i, ""))}</button>`).join("")}</div>`;
     }
     h += `<div><button type="button" id="reset">${u.reset}</button></div>`;
   }
