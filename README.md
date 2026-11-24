@@ -317,11 +317,20 @@ calls, tokens and retries ticking up), sees its move land, then watches
 Stockfish grade it and opens that move's trace. The recorded-game replay is
 untouched: `/` still serves it, and `/live.html` links back to it.
 
-The **Tutorial** tab (`/tutorial.html`) is a short guided walkthrough for someone new
-to all this: the board, a move's trace, how blunders are graded, and what
-predicting one from telemetry means. It runs on a bundled sample game, so it
-needs no API key and no Stockfish, and works without `--live`; the link to the
-live page only appears when human mode is on.
+The **Tutorial** tab (`/tutorial.html`) is one guided path for someone new to
+chess *and* to all this, in English or Japanese (the English / 日本語 toggle; the
+choice is remembered in the browser, and `?lang=ja` sets it). Part 1, *How to
+play chess*, teaches the board, every piece, check, checkmate, draws, castling,
+en passant, promotion and a few beginner ideas, with a small position per lesson
+you can click. Part 2, *How to read the coaching*, walks through a move, its
+trace, blunder grading and predicting a blunder from telemetry. Links look like
+`/tutorial.html?part=2&step=3&lang=ja`. It runs on bundled data, so it needs no
+API key and no Stockfish, and works without `--live`; the link to the live page
+only appears when human mode is on. The Japanese text is machine-assisted and
+needs a native speaker's review. The squares each lesson highlights come from the
+Go move generator: `go test ./internal/web -run TestTutorialLessonData
+-update-lessons` rewrites them in `tutorial.html`, and plain `go test` fails if
+they drift.
 
 ```bash
 make live-mock                     # offline mock model, no API key (rehearsal)

@@ -93,27 +93,79 @@
   .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px; margin-right: 6px; vertical-align: middle; background: currentColor; }
   @media (max-width: 900px) { .keyhint { display: none; } .dots { gap: 4px; } .dots button { width: 22px; height: 22px; } }
   .ctas { display: flex; gap: 10px; flex-wrap: wrap; margin: 12px 0 6px; }
+  /* Lesson tokens: derived from the app's own variables so a re-theme follows them. */
+  :root { --move: var(--accent); --capture: var(--mistake); --special: var(--risk2); --danger: var(--blunder); --select: #f7e36a; }
+  .sq[data-sq] { cursor: default; }
+  .board-live .sq[data-sq] { cursor: pointer; }
+  .sq:focus-visible { outline: 3px solid var(--accent); outline-offset: -3px; z-index: 4; }
+  .sq.sel::after { content: ""; position: absolute; inset: 0; background: #f7e36a99; }
+  .sq.chk::after { content: ""; position: absolute; inset: 0; background: #f8514999; }
+  .sq.tgt::before { content: ""; position: absolute; width: 28%; height: 28%; border-radius: 50%; background: var(--move); opacity: .9; z-index: 2; box-shadow: 0 0 0 2px #0b122066; }
+  .sq.tgt.cap::before { width: 88%; height: 88%; background: transparent; border: 5px solid var(--capture); box-shadow: none; }
+  .sq.tgt.sp::before { width: 88%; height: 88%; background: transparent; border: 5px solid var(--special); box-shadow: none; }
+  .sq.danger::after { content: "✕"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 8cqw; font-weight: 700; color: var(--danger); text-shadow: 0 0 3px #000, 0 0 6px #000; z-index: 3; }
+  .boardnote { min-height: 2.9em; }
+
+  .parts { display: flex; gap: 6px; flex-wrap: wrap; margin: -4px 0 12px; }
+  .parts button { flex: 1 1 200px; text-align: left; font-weight: 600; color: var(--muted); }
+  .parts button[aria-current="true"] { color: var(--text); border-color: var(--accent); background: #58a6ff1a; }
+  .langs { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; margin-left: auto; }
+  .langs button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 5px 12px; font-weight: 600; }
+  .langs button[aria-pressed="true"] { background: var(--accent); color: #0b1220; }
+  .headright { display: flex; align-items: center; gap: 10px 14px; margin-left: auto; flex-wrap: wrap; }
+  .linkbtn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-decoration: underline; cursor: pointer; text-align: left; }
+  .linkbtn:hover { color: var(--text); }
+  .skip { margin-top: 14px; }
+  table.ptab { border-collapse: collapse; width: 100%; margin: 8px 0 10px; font-size: 14px; }
+  .ptab th { color: var(--muted); font-weight: 500; text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; }
+  .ptab th, .ptab td { padding: 4px 10px 4px 0; border-bottom: 1px solid var(--line); }
+  .pcg { font-size: 24px; line-height: 1; }
+  .lessontools { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--line); display: grid; gap: 10px; }
+  .exbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+  .exbtns button[aria-pressed="true"] { border-color: var(--accent); background: #58a6ff1a; }
+  .key { display: flex; gap: 6px 16px; flex-wrap: wrap; color: var(--muted); font-size: 13px; }
+  .key i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border-radius: 50%; }
+  .key .k-move { background: var(--move); }
+  .key .k-cap { border: 3px solid var(--capture); }
+  .key .k-sp { border: 3px solid var(--special); }
+  .key .k-chk { background: #f8514999; border-radius: 2px; }
+  .key .k-x { width: auto; height: auto; color: var(--danger); font-style: normal; font-weight: 700; }
+  .promo { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .promo button { font-size: 15px; }
+  ol { padding-left: 22px; } .panel ol li { margin: 6px 0; }
+  :lang(ja) { line-height: 1.7; }
+  html[lang="ja"] .panel h2 { line-height: 1.35; }
+  html[lang="ja"] .stepno, html[lang="ja"] .rowlabel { text-transform: none; letter-spacing: 0; }
+  .stepnav .dots { order: 3; width: 100%; justify-content: center; flex-wrap: wrap; margin: 6px 0 0; }
+  .stepnav #next { margin-left: auto; }
 </style>
 </head>
 <body>
 <header>
-  <h1>The Observability Gambit <span>· tutorial</span></h1>
-  <nav class="tabs" aria-label="Views">
-    <a href="index.html">Recorded games</a>
-    <a href="live.html" id="liveTab" hidden>Play the agent</a>
-    <a href="tutorial.html" aria-current="page">Tutorial</a>
+  <h1><span class="h1t" id="h1t"></span> <span id="h1s"></span></h1>
+  <nav class="tabs" aria-label="Views" id="tabs">
+    <a href="index.html" id="tabRec"></a>
+    <a href="live.html" id="liveTab" hidden></a>
+    <a href="tutorial.html" aria-current="page" id="tabTut"></a>
   </nav>
-  <span class="badge mock" title="The board and Stockfish grades are real; the telemetry and risk numbers are invented to show the idea.">Sample game · not a result</span>
-  <span class="muted keyhint" style="margin-left:auto;font-size:13px"><kbd>←</kbd><kbd>→</kbd> step</span>
+  <span class="badge mock" id="badge"></span>
+  <div class="headright">
+    <span class="muted keyhint" style="font-size:13px"><kbd>←</kbd><kbd>→</kbd> <span id="keyhint"></span></span>
+    <div class="langs" role="group" id="langs">
+      <button type="button" id="langEn" data-lang="en" lang="en">English</button>
+      <button type="button" id="langJa" data-lang="ja" lang="ja">日本語</button>
+    </div>
+  </div>
 </header>
 
 <main>
   <div>
     <div id="board" aria-label="Chess board"></div>
-    <div class="boardnote" id="boardNote"></div>
+    <div class="boardnote" id="boardNote" role="status" aria-live="polite"></div>
   </div>
-  <div class="panel" id="panel" aria-live="polite"></div>
+  <div class="panel" id="panel"></div>
 </main>
+
 
 <script type="application/json" id="sample-game">
 {
@@ -384,62 +436,172 @@
 }
 </script>
 
+<script type="application/json" id="chess-lessons">
+{"positions": {
+ "bishop": {"fen":"6k1/8/5p2/8/3B4/8/1P6/7K w - - 0 1","select":"d4","moves":{"b2":[{"to":"b3","kind":"move","after":"6k1/8/5p2/8/3B4/1P6/8/7K b - - 0 1"},{"to":"b4","kind":"move","after":"6k1/8/5p2/8/1P1B4/8/8/7K b - b3 0 1"}],"d4":[{"to":"a7","kind":"move","after":"6k1/B7/5p2/8/8/8/1P6/7K b - - 1 1"},{"to":"b6","kind":"move","after":"6k1/8/1B3p2/8/8/8/1P6/7K b - - 1 1"},{"to":"c3","kind":"move","after":"6k1/8/5p2/8/8/2B5/1P6/7K b - - 1 1"},{"to":"c5","kind":"move","after":"6k1/8/5p2/2B5/8/8/1P6/7K b - - 1 1"},{"to":"e3","kind":"move","after":"6k1/8/5p2/8/8/4B3/1P6/7K b - - 1 1"},{"to":"e5","kind":"move","after":"6k1/8/5p2/4B3/8/8/1P6/7K b - - 1 1"},{"to":"f2","kind":"move","after":"6k1/8/5p2/8/8/8/1P3B2/7K b - - 1 1"},{"to":"f6","kind":"move","capture":true,"after":"6k1/8/5B2/8/8/8/1P6/7K b - - 0 1"},{"to":"g1","kind":"move","after":"6k1/8/5p2/8/8/8/1P6/6BK b - - 1 1"}],"h1":[{"to":"g1","kind":"move","after":"6k1/8/5p2/8/3B4/8/1P6/6K1 b - - 1 1"},{"to":"g2","kind":"move","after":"6k1/8/5p2/8/3B4/8/1P4K1/8 b - - 1 1"},{"to":"h2","kind":"move","after":"6k1/8/5p2/8/3B4/8/1P5K/8 b - - 1 1"}]}},
+ "castle": {"fen":"r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1","select":"e1","moves":{"a1":[{"to":"a2","kind":"move","after":"r3k2r/8/8/8/8/8/R7/4K2R b Kkq - 1 1"},{"to":"a3","kind":"move","after":"r3k2r/8/8/8/8/R7/8/4K2R b Kkq - 1 1"},{"to":"a4","kind":"move","after":"r3k2r/8/8/8/R7/8/8/4K2R b Kkq - 1 1"},{"to":"a5","kind":"move","after":"r3k2r/8/8/R7/8/8/8/4K2R b Kkq - 1 1"},{"to":"a6","kind":"move","after":"r3k2r/8/R7/8/8/8/8/4K2R b Kkq - 1 1"},{"to":"a7","kind":"move","after":"r3k2r/R7/8/8/8/8/8/4K2R b Kkq - 1 1"},{"to":"a8","kind":"move","capture":true,"check":true,"after":"R3k2r/8/8/8/8/8/8/4K2R b Kk - 0 1"},{"to":"b1","kind":"move","after":"r3k2r/8/8/8/8/8/8/1R2K2R b Kkq - 1 1"},{"to":"c1","kind":"move","after":"r3k2r/8/8/8/8/8/8/2R1K2R b Kkq - 1 1"},{"to":"d1","kind":"move","after":"r3k2r/8/8/8/8/8/8/3RK2R b Kkq - 1 1"}],"e1":[{"to":"c1","kind":"castle","after":"r3k2r/8/8/8/8/8/8/2KR3R b kq - 1 1"},{"to":"d1","kind":"move","after":"r3k2r/8/8/8/8/8/8/R2K3R b kq - 1 1"},{"to":"d2","kind":"move","after":"r3k2r/8/8/8/8/8/3K4/R6R b kq - 1 1"},{"to":"e2","kind":"move","after":"r3k2r/8/8/8/8/8/4K3/R6R b kq - 1 1"},{"to":"f1","kind":"move","after":"r3k2r/8/8/8/8/8/8/R4K1R b kq - 1 1"},{"to":"f2","kind":"move","after":"r3k2r/8/8/8/8/8/5K2/R6R b kq - 1 1"},{"to":"g1","kind":"castle","after":"r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1"}],"h1":[{"to":"f1","kind":"move","after":"r3k2r/8/8/8/8/8/8/R3KR2 b Qkq - 1 1"},{"to":"g1","kind":"move","after":"r3k2r/8/8/8/8/8/8/R3K1R1 b Qkq - 1 1"},{"to":"h2","kind":"move","after":"r3k2r/8/8/8/8/8/7R/R3K3 b Qkq - 1 1"},{"to":"h3","kind":"move","after":"r3k2r/8/8/8/8/7R/8/R3K3 b Qkq - 1 1"},{"to":"h4","kind":"move","after":"r3k2r/8/8/8/7R/8/8/R3K3 b Qkq - 1 1"},{"to":"h5","kind":"move","after":"r3k2r/8/8/7R/8/8/8/R3K3 b Qkq - 1 1"},{"to":"h6","kind":"move","after":"r3k2r/8/7R/8/8/8/8/R3K3 b Qkq - 1 1"},{"to":"h7","kind":"move","after":"r3k2r/7R/8/8/8/8/8/R3K3 b Qkq - 1 1"},{"to":"h8","kind":"move","capture":true,"check":true,"after":"r3k2R/8/8/8/8/8/8/R3K3 b Qq - 0 1"}]}},
+ "castle-blocked": {"fen":"5rk1/8/8/8/8/8/8/R3K2R w KQ - 0 1","select":"e1","moves":{"a1":[{"to":"a2","kind":"move","after":"5rk1/8/8/8/8/8/R7/4K2R b K - 1 1"},{"to":"a3","kind":"move","after":"5rk1/8/8/8/8/R7/8/4K2R b K - 1 1"},{"to":"a4","kind":"move","after":"5rk1/8/8/8/R7/8/8/4K2R b K - 1 1"},{"to":"a5","kind":"move","after":"5rk1/8/8/R7/8/8/8/4K2R b K - 1 1"},{"to":"a6","kind":"move","after":"5rk1/8/R7/8/8/8/8/4K2R b K - 1 1"},{"to":"a7","kind":"move","after":"5rk1/R7/8/8/8/8/8/4K2R b K - 1 1"},{"to":"a8","kind":"move","after":"R4rk1/8/8/8/8/8/8/4K2R b K - 1 1"},{"to":"b1","kind":"move","after":"5rk1/8/8/8/8/8/8/1R2K2R b K - 1 1"},{"to":"c1","kind":"move","after":"5rk1/8/8/8/8/8/8/2R1K2R b K - 1 1"},{"to":"d1","kind":"move","after":"5rk1/8/8/8/8/8/8/3RK2R b K - 1 1"}],"e1":[{"to":"c1","kind":"castle","after":"5rk1/8/8/8/8/8/8/2KR3R b - - 1 1"},{"to":"d1","kind":"move","after":"5rk1/8/8/8/8/8/8/R2K3R b - - 1 1"},{"to":"d2","kind":"move","after":"5rk1/8/8/8/8/8/3K4/R6R b - - 1 1"},{"to":"e2","kind":"move","after":"5rk1/8/8/8/8/8/4K3/R6R b - - 1 1"}],"h1":[{"to":"f1","kind":"move","after":"5rk1/8/8/8/8/8/8/R3KR2 b Q - 1 1"},{"to":"g1","kind":"move","check":true,"after":"5rk1/8/8/8/8/8/8/R3K1R1 b Q - 1 1"},{"to":"h2","kind":"move","after":"5rk1/8/8/8/8/8/7R/R3K3 b Q - 1 1"},{"to":"h3","kind":"move","after":"5rk1/8/8/8/8/7R/8/R3K3 b Q - 1 1"},{"to":"h4","kind":"move","after":"5rk1/8/8/8/7R/8/8/R3K3 b Q - 1 1"},{"to":"h5","kind":"move","after":"5rk1/8/8/7R/8/8/8/R3K3 b Q - 1 1"},{"to":"h6","kind":"move","after":"5rk1/8/7R/8/8/8/8/R3K3 b Q - 1 1"},{"to":"h7","kind":"move","after":"5rk1/7R/8/8/8/8/8/R3K3 b Q - 1 1"},{"to":"h8","kind":"move","check":true,"after":"5rkR/8/8/8/8/8/8/R3K3 b Q - 1 1"}]}},
+ "check": {"fen":"R3r3/6k1/8/8/8/8/8/2B1K3 w - - 0 1","select":"e1","check":"e1","moves":{"a8":[{"to":"e8","kind":"move","capture":true,"after":"4R3/6k1/8/8/8/8/8/2B1K3 b - - 0 1"}],"c1":[{"to":"e3","kind":"move","after":"R3r3/6k1/8/8/8/4B3/8/4K3 b - - 1 1"}],"e1":[{"to":"d1","kind":"move","after":"R3r3/6k1/8/8/8/8/8/2BK4 b - - 1 1"},{"to":"d2","kind":"move","after":"R3r3/6k1/8/8/8/8/3K4/2B5 b - - 1 1"},{"to":"f1","kind":"move","after":"R3r3/6k1/8/8/8/8/8/2B2K2 b - - 1 1"},{"to":"f2","kind":"move","after":"R3r3/6k1/8/8/8/8/5K2/2B5 b - - 1 1"}]}},
+ "checkmate": {"fen":"R5k1/5ppp/8/8/8/8/8/4K3 b - - 0 1","select":"g8","check":"g8","moves":{"f7":[],"g7":[],"g8":[],"h7":[]}},
+ "enpassant": {"fen":"4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1","select":"e5","moves":{"e1":[{"to":"d1","kind":"move","after":"4k3/8/8/3pP3/8/8/8/3K4 b - - 1 1"},{"to":"d2","kind":"move","after":"4k3/8/8/3pP3/8/8/3K4/8 b - - 1 1"},{"to":"e2","kind":"move","after":"4k3/8/8/3pP3/8/8/4K3/8 b - - 1 1"},{"to":"f1","kind":"move","after":"4k3/8/8/3pP3/8/8/8/5K2 b - - 1 1"},{"to":"f2","kind":"move","after":"4k3/8/8/3pP3/8/8/5K2/8 b - - 1 1"}],"e5":[{"to":"d6","kind":"enpassant","capture":true,"after":"4k3/8/3P4/8/8/8/8/4K3 b - - 0 1"},{"to":"e6","kind":"move","after":"4k3/8/4P3/3p4/8/8/8/4K3 b - - 0 1"}]}},
+ "enpassant-late": {"fen":"4k3/8/8/3pP3/8/8/8/4K3 w - - 0 1","select":"e5","moves":{"e1":[{"to":"d1","kind":"move","after":"4k3/8/8/3pP3/8/8/8/3K4 b - - 1 1"},{"to":"d2","kind":"move","after":"4k3/8/8/3pP3/8/8/3K4/8 b - - 1 1"},{"to":"e2","kind":"move","after":"4k3/8/8/3pP3/8/8/4K3/8 b - - 1 1"},{"to":"f1","kind":"move","after":"4k3/8/8/3pP3/8/8/8/5K2 b - - 1 1"},{"to":"f2","kind":"move","after":"4k3/8/8/3pP3/8/8/5K2/8 b - - 1 1"}],"e5":[{"to":"e6","kind":"move","after":"4k3/8/4P3/3p4/8/8/8/4K3 b - - 0 1"}]}},
+ "king": {"fen":"8/8/5k2/3p4/8/4Kp2/8/8 w - - 0 1","select":"e3","danger":["e2","e4"],"moves":{"e3":[{"to":"d2","kind":"move","after":"8/8/5k2/3p4/8/5p2/3K4/8 b - - 1 1"},{"to":"d3","kind":"move","after":"8/8/5k2/3p4/8/3K1p2/8/8 b - - 1 1"},{"to":"d4","kind":"move","after":"8/8/5k2/3p4/3K4/5p2/8/8 b - - 1 1"},{"to":"f2","kind":"move","after":"8/8/5k2/3p4/8/5p2/5K2/8 b - - 1 1"},{"to":"f3","kind":"move","capture":true,"after":"8/8/5k2/3p4/8/5K2/8/8 b - - 0 1"},{"to":"f4","kind":"move","after":"8/8/5k2/3p4/5K2/5p2/8/8 b - - 1 1"}]}},
+ "kings": {"fen":"4k3/8/8/8/8/8/8/4K3 w - - 0 1","moves":{"e1":[{"to":"d1","kind":"move","after":"4k3/8/8/8/8/8/8/3K4 b - - 1 1"},{"to":"d2","kind":"move","after":"4k3/8/8/8/8/8/3K4/8 b - - 1 1"},{"to":"e2","kind":"move","after":"4k3/8/8/8/8/8/4K3/8 b - - 1 1"},{"to":"f1","kind":"move","after":"4k3/8/8/8/8/8/8/5K2 b - - 1 1"},{"to":"f2","kind":"move","after":"4k3/8/8/8/8/8/5K2/8 b - - 1 1"}]}},
+ "knight": {"fen":"6k1/8/2p5/4pP2/3N4/2P1P3/8/7K w - - 0 1","select":"d4","moves":{"c3":[{"to":"c4","kind":"move","after":"6k1/8/2p5/4pP2/2PN4/4P3/8/7K b - - 0 1"}],"d4":[{"to":"b3","kind":"move","after":"6k1/8/2p5/4pP2/8/1NP1P3/8/7K b - - 1 1"},{"to":"b5","kind":"move","after":"6k1/8/2p5/1N2pP2/8/2P1P3/8/7K b - - 1 1"},{"to":"c2","kind":"move","after":"6k1/8/2p5/4pP2/8/2P1P3/2N5/7K b - - 1 1"},{"to":"c6","kind":"move","capture":true,"after":"6k1/8/2N5/4pP2/8/2P1P3/8/7K b - - 0 1"},{"to":"e2","kind":"move","after":"6k1/8/2p5/4pP2/8/2P1P3/4N3/7K b - - 1 1"},{"to":"e6","kind":"move","after":"6k1/8/2p1N3/4pP2/8/2P1P3/8/7K b - - 1 1"},{"to":"f3","kind":"move","after":"6k1/8/2p5/4pP2/8/2P1PN2/8/7K b - - 1 1"}],"e3":[{"to":"e4","kind":"move","after":"6k1/8/2p5/4pP2/3NP3/2P5/8/7K b - - 0 1"}],"f5":[{"to":"f6","kind":"move","after":"6k1/8/2p2P2/4p3/3N4/2P1P3/8/7K b - - 0 1"}],"h1":[{"to":"g1","kind":"move","after":"6k1/8/2p5/4pP2/3N4/2P1P3/8/6K1 b - - 1 1"},{"to":"g2","kind":"move","after":"6k1/8/2p5/4pP2/3N4/2P1P3/6K1/8 b - - 1 1"},{"to":"h2","kind":"move","after":"6k1/8/2p5/4pP2/3N4/2P1P3/7K/8 b - - 1 1"}]}},
+ "pawn": {"fen":"6k1/8/8/1p1p4/2P5/6pn/4P1P1/7K w - - 0 1","select":"e2","moves":{"c4":[{"to":"b5","kind":"move","capture":true,"after":"6k1/8/8/1P1p4/8/6pn/4P1P1/7K b - - 0 1"},{"to":"c5","kind":"move","after":"6k1/8/8/1pPp4/8/6pn/4P1P1/7K b - - 0 1"},{"to":"d5","kind":"move","capture":true,"after":"6k1/8/8/1p1P4/8/6pn/4P1P1/7K b - - 0 1"}],"e2":[{"to":"e3","kind":"move","after":"6k1/8/8/1p1p4/2P5/4P1pn/6P1/7K b - - 0 1"},{"to":"e4","kind":"move","after":"6k1/8/8/1p1p4/2P1P3/6pn/6P1/7K b - e3 0 1"}],"g2":[{"to":"h3","kind":"move","capture":true,"after":"6k1/8/8/1p1p4/2P5/6pP/4P3/7K b - - 0 1"}],"h1":[]}},
+ "promotion": {"fen":"7k/4P3/8/8/8/8/8/4K3 w - - 0 1","select":"e7","moves":{"e1":[{"to":"d1","kind":"move","after":"7k/4P3/8/8/8/8/8/3K4 b - - 1 1"},{"to":"d2","kind":"move","after":"7k/4P3/8/8/8/8/3K4/8 b - - 1 1"},{"to":"e2","kind":"move","after":"7k/4P3/8/8/8/8/4K3/8 b - - 1 1"},{"to":"f1","kind":"move","after":"7k/4P3/8/8/8/8/8/5K2 b - - 1 1"},{"to":"f2","kind":"move","after":"7k/4P3/8/8/8/8/5K2/8 b - - 1 1"}],"e7":[{"to":"e8","kind":"promotion","check":true,"promo":{"b":"4B2k/8/8/8/8/8/8/4K3 b - - 0 1","n":"4N2k/8/8/8/8/8/8/4K3 b - - 0 1","q":"4Q2k/8/8/8/8/8/8/4K3 b - - 0 1","r":"4R2k/8/8/8/8/8/8/4K3 b - - 0 1"}}]}},
+ "promotion-capture": {"fen":"3r3k/4P3/8/8/8/8/8/4K3 w - - 0 1","select":"e7","moves":{"e1":[{"to":"e2","kind":"move","after":"3r3k/4P3/8/8/8/8/4K3/8 b - - 1 1"},{"to":"f1","kind":"move","after":"3r3k/4P3/8/8/8/8/8/5K2 b - - 1 1"},{"to":"f2","kind":"move","after":"3r3k/4P3/8/8/8/8/5K2/8 b - - 1 1"}],"e7":[{"to":"d8","kind":"promotion","capture":true,"check":true,"promo":{"b":"3B3k/8/8/8/8/8/8/4K3 b - - 0 1","n":"3N3k/8/8/8/8/8/8/4K3 b - - 0 1","q":"3Q3k/8/8/8/8/8/8/4K3 b - - 0 1","r":"3R3k/8/8/8/8/8/8/4K3 b - - 0 1"}},{"to":"e8","kind":"promotion","check":true,"promo":{"b":"3rB2k/8/8/8/8/8/8/4K3 b - - 0 1","n":"3rN2k/8/8/8/8/8/8/4K3 b - - 0 1","q":"3rQ2k/8/8/8/8/8/8/4K3 b - - 0 1","r":"3rR2k/8/8/8/8/8/8/4K3 b - - 0 1"}}]}},
+ "queen": {"fen":"6k1/3p4/1p6/8/3Q4/8/1P6/7K w - - 0 1","select":"d4","moves":{"b2":[{"to":"b3","kind":"move","after":"6k1/3p4/1p6/8/3Q4/1P6/8/7K b - - 0 1"},{"to":"b4","kind":"move","after":"6k1/3p4/1p6/8/1P1Q4/8/8/7K b - b3 0 1"}],"d4":[{"to":"a4","kind":"move","after":"6k1/3p4/1p6/8/Q7/8/1P6/7K b - - 1 1"},{"to":"b4","kind":"move","after":"6k1/3p4/1p6/8/1Q6/8/1P6/7K b - - 1 1"},{"to":"b6","kind":"move","capture":true,"after":"6k1/3p4/1Q6/8/8/8/1P6/7K b - - 0 1"},{"to":"c3","kind":"move","after":"6k1/3p4/1p6/8/8/2Q5/1P6/7K b - - 1 1"},{"to":"c4","kind":"move","check":true,"after":"6k1/3p4/1p6/8/2Q5/8/1P6/7K b - - 1 1"},{"to":"c5","kind":"move","after":"6k1/3p4/1p6/2Q5/8/8/1P6/7K b - - 1 1"},{"to":"d1","kind":"move","after":"6k1/3p4/1p6/8/8/8/1P6/3Q3K b - - 1 1"},{"to":"d2","kind":"move","after":"6k1/3p4/1p6/8/8/8/1P1Q4/7K b - - 1 1"},{"to":"d3","kind":"move","after":"6k1/3p4/1p6/8/8/3Q4/1P6/7K b - - 1 1"},{"to":"d5","kind":"move","check":true,"after":"6k1/3p4/1p6/3Q4/8/8/1P6/7K b - - 1 1"},{"to":"d6","kind":"move","after":"6k1/3p4/1p1Q4/8/8/8/1P6/7K b - - 1 1"},{"to":"d7","kind":"move","capture":true,"after":"6k1/3Q4/1p6/8/8/8/1P6/7K b - - 0 1"},{"to":"e3","kind":"move","after":"6k1/3p4/1p6/8/8/4Q3/1P6/7K b - - 1 1"},{"to":"e4","kind":"move","after":"6k1/3p4/1p6/8/4Q3/8/1P6/7K b - - 1 1"},{"to":"e5","kind":"move","after":"6k1/3p4/1p6/4Q3/8/8/1P6/7K b - - 1 1"},{"to":"f2","kind":"move","after":"6k1/3p4/1p6/8/8/8/1P3Q2/7K b - - 1 1"},{"to":"f4","kind":"move","after":"6k1/3p4/1p6/8/5Q2/8/1P6/7K b - - 1 1"},{"to":"f6","kind":"move","after":"6k1/3p4/1p3Q2/8/8/8/1P6/7K b - - 1 1"},{"to":"g1","kind":"move","check":true,"after":"6k1/3p4/1p6/8/8/8/1P6/6QK b - - 1 1"},{"to":"g4","kind":"move","check":true,"after":"6k1/3p4/1p6/8/6Q1/8/1P6/7K b - - 1 1"},{"to":"g7","kind":"move","check":true,"after":"6k1/3p2Q1/1p6/8/8/8/1P6/7K b - - 1 1"},{"to":"h4","kind":"move","after":"6k1/3p4/1p6/8/7Q/8/1P6/7K b - - 1 1"},{"to":"h8","kind":"move","check":true,"after":"6kQ/3p4/1p6/8/8/8/1P6/7K b - - 1 1"}],"h1":[{"to":"g1","kind":"move","after":"6k1/3p4/1p6/8/3Q4/8/1P6/6K1 b - - 1 1"},{"to":"g2","kind":"move","after":"6k1/3p4/1p6/8/3Q4/8/1P4K1/8 b - - 1 1"},{"to":"h2","kind":"move","after":"6k1/3p4/1p6/8/3Q4/8/1P5K/8 b - - 1 1"}]}},
+ "rook": {"fen":"6k1/3p4/8/8/1p1R4/8/3P4/7K w - - 0 1","select":"d4","moves":{"d2":[{"to":"d3","kind":"move","after":"6k1/3p4/8/8/1p1R4/3P4/8/7K b - - 0 1"}],"d4":[{"to":"b4","kind":"move","capture":true,"after":"6k1/3p4/8/8/1R6/8/3P4/7K b - - 0 1"},{"to":"c4","kind":"move","after":"6k1/3p4/8/8/1pR5/8/3P4/7K b - - 1 1"},{"to":"d3","kind":"move","after":"6k1/3p4/8/8/1p6/3R4/3P4/7K b - - 1 1"},{"to":"d5","kind":"move","after":"6k1/3p4/8/3R4/1p6/8/3P4/7K b - - 1 1"},{"to":"d6","kind":"move","after":"6k1/3p4/3R4/8/1p6/8/3P4/7K b - - 1 1"},{"to":"d7","kind":"move","capture":true,"after":"6k1/3R4/8/8/1p6/8/3P4/7K b - - 0 1"},{"to":"e4","kind":"move","after":"6k1/3p4/8/8/1p2R3/8/3P4/7K b - - 1 1"},{"to":"f4","kind":"move","after":"6k1/3p4/8/8/1p3R2/8/3P4/7K b - - 1 1"},{"to":"g4","kind":"move","check":true,"after":"6k1/3p4/8/8/1p4R1/8/3P4/7K b - - 1 1"},{"to":"h4","kind":"move","after":"6k1/3p4/8/8/1p5R/8/3P4/7K b - - 1 1"}],"h1":[{"to":"g1","kind":"move","after":"6k1/3p4/8/8/1p1R4/8/3P4/6K1 b - - 1 1"},{"to":"g2","kind":"move","after":"6k1/3p4/8/8/1p1R4/8/3P2K1/8 b - - 1 1"},{"to":"h2","kind":"move","after":"6k1/3p4/8/8/1p1R4/8/3P3K/8 b - - 1 1"}]}},
+ "stalemate": {"fen":"7k/5Q2/6K1/8/8/8/8/8 b - - 0 1","select":"h8","moves":{"h8":[]}},
+ "start": {"fen":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","moves":{"a1":[],"a2":[{"to":"a3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/P7/1PPPPPPP/RNBQKBNR b KQkq - 0 1"},{"to":"a4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/P7/8/1PPPPPPP/RNBQKBNR b KQkq a3 0 1"}],"b1":[{"to":"a3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/N7/PPPPPPPP/R1BQKBNR b KQkq - 1 1"},{"to":"c3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/2N5/PPPPPPPP/R1BQKBNR b KQkq - 1 1"}],"b2":[{"to":"b3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/1P6/P1PPPPPP/RNBQKBNR b KQkq - 0 1"},{"to":"b4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/1P6/8/P1PPPPPP/RNBQKBNR b KQkq b3 0 1"}],"c1":[],"c2":[{"to":"c3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/2P5/PP1PPPPP/RNBQKBNR b KQkq - 0 1"},{"to":"c4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq c3 0 1"}],"d1":[],"d2":[{"to":"d3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/3P4/PPP1PPPP/RNBQKBNR b KQkq - 0 1"},{"to":"d4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq d3 0 1"}],"e1":[],"e2":[{"to":"e3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR b KQkq - 0 1"},{"to":"e4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"}],"f1":[],"f2":[{"to":"f3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/5P2/PPPPP1PP/RNBQKBNR b KQkq - 0 1"},{"to":"f4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/5P2/8/PPPPP1PP/RNBQKBNR b KQkq f3 0 1"}],"g1":[{"to":"f3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1"},{"to":"h3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/7N/PPPPPPPP/RNBQKB1R b KQkq - 1 1"}],"g2":[{"to":"g3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/6P1/PPPPPP1P/RNBQKBNR b KQkq - 0 1"},{"to":"g4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/6P1/8/PPPPPP1P/RNBQKBNR b KQkq g3 0 1"}],"h1":[],"h2":[{"to":"h3","kind":"move","after":"rnbqkbnr/pppppppp/8/8/8/7P/PPPPPPP1/RNBQKBNR b KQkq - 0 1"},{"to":"h4","kind":"move","after":"rnbqkbnr/pppppppp/8/8/7P/8/PPPPPPP1/RNBQKBNR b KQkq h3 0 1"}]}}
+}}
+</script>
+
+<script src="tutorial-core.js"></script>
+<script src="tutorial-text.js"></script>
 <script>
+const Core = TutorialCore;
+const { TEXT, pieceLabel, pieceShort } = TutorialText;
 const SAMPLE = JSON.parse(document.getElementById("sample-game").textContent);
+const LESSONS = JSON.parse(document.getElementById("chess-lessons").textContent).positions;
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
 const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const fmt = (s, v) => s.replace(/\{(\w+)\}/g, (_, k) => (k in v ? v[k] : "{" + k + "}"));
 let live = null; // /api/config's live block, when a server with human mode is behind this page
 
+// The tutorial in two parts. Part 1 steps show a lesson position (LESSONS) the learner can click;
+// Part 2 steps show the sample game at some ply. Their words live in tutorial-text.js, by id.
+const CENTRE = ["d4", "e4", "d5", "e5"];
+const PARTS = {
+  1: [
+    { id: "goal", pos: "start", moves: false },
+    { id: "board", pos: "start", moves: false, coords: true },
+    { id: "rook", pos: "rook" }, { id: "bishop", pos: "bishop" }, { id: "queen", pos: "queen" },
+    { id: "knight", pos: "knight" }, { id: "king", pos: "king" }, { id: "pawn", pos: "pawn" },
+    { id: "check", pos: "check" }, { id: "checkmate", pos: "checkmate" },
+    { id: "draw", examples: ["stalemate", "kings"] },
+    { id: "castle", examples: ["castle", "castle-blocked"] },
+    { id: "enpassant", examples: ["enpassant", "enpassant-late"] },
+    { id: "promotion", examples: ["promotion", "promotion-capture"] },
+    { id: "ideas", board: { ply: 9, emph: CENTRE } },
+    { id: "bridge", board: { ply: 16 } },
+  ],
+  2: [
+    { id: "watching", board: { ply: 0 } },
+    { id: "notation", board: { ply: 3, coords: true, emph: ["f3"] } },
+    { id: "trace", board: { ply: 14 } },
+    { id: "numbers", board: { ply: 14 } },
+    { id: "grading", board: { ply: 15, blunder: true, best: ["g3"] } },
+    { id: "predict", board: { ply: 14 } },
+    { id: "try", board: { ply: 16 } },
+  ],
+};
+const COUNTS = { 1: PARTS[1].length, 2: PARTS[2].length };
+
+// ---- the sample game (Part 2) ----
 const plies = SAMPLE.plies;
 const agentMove = (n) => plies.find(p => p.by_agent && p.agent.move_number === n).agent;
 const sanOf = (a) => plies.find(p => p.by_agent && p.agent === a).san;
 const fenAt = (i) => i === 0 ? SAMPLE.start_fen : plies[i - 1].fen_after;
 const fmtCP = (cp) => (cp >= 0 ? "+" : "") + (cp / 100).toFixed(1);
 
-function expand(row) { const out = []; for (const ch of row) { if (/\d/.test(ch)) out.push(...".".repeat(+ch)); else out.push(ch); } return out; }
+// ---- state ----
+let route = { part: 1, step: 1, lang: "en" };
+let L = null; // lesson state: { ex, sel, after, last, promo, msg }
 
-// ply: which position to draw. emph: squares to ring in blue. coords: spotlight the a-h and 1-8 labels.
-// best: the engine's preferred squares, drawn in green. last: use the ply's last-move highlight.
-function renderBoard({ ply, emph = [], coords = false, best = [], blunder = false }) {
-  const rows = fenAt(ply).split(" ")[0].split("/");
-  const cur = ply > 0 ? plies[ply - 1] : null;
-  const hl = cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [];
+const stepNow = () => PARTS[route.part][route.step - 1];
+const T = () => TEXT[route.lang];
+const lessonId = (s, ex) => s.examples ? s.examples[ex] : s.pos;
+
+function newLesson(ex = 0) {
+  const s = stepNow(), id = lessonId(s, ex);
+  const pos = id ? LESSONS[id] : null;
+  return { ex, sel: pos && s.moves !== false && pos.select ? pos.select : null, after: null, last: null, promo: null, msg: "" };
+}
+
+function pieceName(ch) { return pieceShort(route.lang, ch); }
+function selMessage(pos, sq) {
+  const ch = Core.pieceAt(pos.fen, sq), u = T().ui;
+  if (!ch) return fmt(u.sqName, { sq, what: u.empty });
+  const piece = pieceName(ch);
+  const sel = Core.selection(pos, sq);
+  if (sel.kind !== "piece" || stepNow().moves === false) return fmt(u.sqName, { sq, what: piece });
+  const n = sel.moves.length;
+  return n ? fmt(u.picked, { piece, sq, n, moves: n === 1 ? u.moveWord1 : u.moveWordN }) : fmt(u.pickedNone, { piece, sq });
+}
+
+// ---- board ----
+// fen: what to draw. coords: spotlight the a-h and 1-8 labels. sel/targets/check/danger/last: lesson overlays.
+// emph: squares to ring in blue. best: the engine's preferred squares, green. blunder: tint the last move red.
+function drawBoard({ fen, coords = false, sel = null, targets = [], check = "", danger = [], last = [], emph = [], best = [], blunder = false, lesson = false }) {
+  const cells = Core.parseFEN(fen);
+  const tmap = {}; for (const m of targets) tmap[m.to] = m;
   const html = [];
   for (let r = 0; r < 8; r++) {
-    const cells = expand(rows[r]);
     for (let f = 0; f < 8; f++) {
       const sq = "abcdefgh"[f] + (8 - r);
-      const c = cells[f];
+      const c = cells[r * 8 + f];
       const cls = ["sq", (r + f) % 2 === 0 ? "l" : "d"];
-      if (hl.includes(sq)) { cls.push("last"); if (blunder) cls.push("blunder"); }
+      if (last.includes(sq)) { cls.push("last"); if (blunder) cls.push("blunder"); }
       if (best.includes(sq)) cls.push("best");
       if (emph.includes(sq)) cls.push("emph");
+      if (sel === sq) cls.push("sel");
+      if (check === sq) cls.push("chk");
+      if (danger.includes(sq)) cls.push("danger");
+      const tm = tmap[sq];
+      if (tm) cls.push("tgt", tm.capture ? "cap" : tm.kind !== "move" ? "sp" : "m");
+      if (tm && tm.kind !== "move" && !tm.capture) { /* special non-capture: ring */ }
+      if (tm && tm.kind !== "move" && tm.capture && tm.kind !== "promotion") cls.push("cap");
       let inner = "";
       if (f === 0) inner += `<span class="coord">${8 - r}</span>`;
       if (r === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
-      if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
-      html.push(`<div class="${cls.join(" ")}" title="${sq}">${inner}</div>`);
+      if (c) inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      const label = c ? `${sq}, ${pieceName(c)}` : sq;
+      html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" title="${sq}" aria-label="${esc(label)}" ${lesson && (tm || (c && sel !== null)) ? 'role="button" tabindex="0"' : ""}>${inner}</div>`);
     }
   }
   const b = $("#board");
   b.classList.toggle("coords", coords);
+  b.classList.toggle("board-live", true);
   b.innerHTML = html.join("");
 }
 
-const chip = (k, v, hot) => `<span class="chip ${hot ? "hot" : ""}"><b>${k}</b>${v}</span>`;
+function renderBoard() {
+  const s = stepNow();
+  const id = lessonId(s, L ? L.ex : 0);
+  if (id) {
+    const pos = LESSONS[id];
+    const pend = L.promo;
+    const targets = (L.sel && !L.after && !pend && s.moves !== false) ? Core.selection(pos, L.sel).moves : [];
+    drawBoard({
+      fen: L.after || pos.fen, coords: !!s.coords, sel: L.after ? null : L.sel, targets, lesson: true,
+      check: L.after ? "" : (pos.check || ""), danger: (L.sel && !L.after && pos.danger) || [], last: L.last || [],
+    });
+  } else {
+    const b = s.board;
+    const cur = b.ply > 0 ? plies[b.ply - 1] : null;
+    drawBoard({ fen: fenAt(b.ply), coords: !!b.coords, emph: b.emph || [], best: b.best || [], blunder: !!b.blunder, last: cur ? [cur.uci.slice(0, 2), cur.uci.slice(2, 4)] : [] });
+  }
+}
+
+// ---- Part 2 pieces ----
+const chip = (k, v, hot) => `<span class="chip ${hot ? "hot" : ""}"><b>${esc(k)}</b>${v}</span>`;
 function chips(a) {
-  return `<div class="chips">${chip("latency", (a.latency_ms / 1000).toFixed(2) + "s")}${chip("chat calls", a.chat_calls, a.chat_calls > 1)}
-    ${chip("in tok", a.input_tokens)}${chip("out tok", a.output_tokens)}${chip("tool calls", a.tool_calls)}
-    ${chip("illegal tries", a.illegal_attempts, a.illegal_attempts > 0)}</div>`;
+  const n = T().steps.numbers.chipNames;
+  return `<div class="chips">${chip(n.latency, (a.latency_ms / 1000).toFixed(2) + "s")}${chip(n.chat, a.chat_calls, a.chat_calls > 1)}
+    ${chip(n.inTok, a.input_tokens)}${chip(n.outTok, a.output_tokens)}${chip(n.tool, a.tool_calls)}
+    ${chip(n.illegal, a.illegal_attempts, a.illegal_attempts > 0)}</div>`;
 }
 
 function timeline() {
-  const W = 600, H = 200, L = 40, R = 14, T = 14, B = 46;
+  const W = 600, H = 200, L = 40, R = 14, T0 = 14, B = 46;
+  const P = T().steps.predict;
   const ag = plies.filter(p => p.by_agent).map(p => p.agent);
   const x = n => L + (W - L - R) * (n - 1) / (ag.length - 1);
-  const y = v => T + (H - T - B) * (1 - v);
+  const y = v => T0 + (H - T0 - B) * (1 - v);
   let s = "";
   for (const v of [0, .25, .5, .75, 1]) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)"/><text x="6" y="${y(v) + 4}">${v * 100}%</text>`;
   s += `<line x1="${L}" x2="${W - R}" y1="${y(SAMPLE.threshold)}" y2="${y(SAMPLE.threshold)}" stroke="var(--muted)" stroke-dasharray="2 4"/>`;
@@ -447,168 +609,156 @@ function timeline() {
   s += line("at_move", "var(--risk2)", true) + line("forecast", "var(--risk)", false);
   for (const a of ag) {
     const big = a.class === "blunder" || a.class === "mistake";
-    s += `<circle cx="${x(a.move_number)}" cy="${H - B + 16}" r="${big ? 6 : 3.5}" fill="${CLASS_COLOR[a.class]}"><title>${a.move_number}. ${esc(sanOf(a))} · ${a.class}</title></circle><text x="${x(a.move_number) - 3}" y="${H - 6}">${a.move_number}</text>`;
+    s += `<circle cx="${x(a.move_number)}" cy="${H - B + 16}" r="${big ? 6 : 3.5}" fill="${CLASS_COLOR[a.class]}"><title>${esc(fmt(P.timelineMove, { n: a.move_number, san: sanOf(a), cls: a.class }))}</title></circle><text x="${x(a.move_number) - 3}" y="${H - 6}">${a.move_number}</text>`;
   }
   const last = ag[ag.length - 1];
   s += `<circle cx="${x(last.move_number)}" cy="${y(last.risk.forecast)}" r="5" fill="var(--risk)" stroke="var(--text)" stroke-width="1.5"/>`;
-  return `<svg id="tl" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sample risk by move: the forecast crosses the alert threshold at move 8, the blunder">${s}</svg>`;
+  return `<svg id="tl" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(P.timelineLabel)}">${s}</svg>`;
 }
 
-const STEPS = [
-  {
-    title: "What you are watching",
-    board: { ply: 0 },
-    note: "The starting position. Everything here is a built-in sample game, so this tutorial works offline.",
-    html: () => `
-      <p>An AI agent, a language model, is playing chess against <b>Stockfish</b>, a very strong chess program.</p>
-      <p>Every move the agent makes is recorded as an <b>OpenTelemetry trace</b>: how long it took, how many tokens it used, whether it tried an illegal move.</p>
-      <p>After each move, a second Stockfish <b>grades</b> it. That gives observability something it rarely has: an objective answer to “was that a good decision?”</p>
-      <p>The question behind the talk: <b>can the traces show a blunder coming?</b></p>
-      <p class="muted">Two ways to see it: <b>Recorded games</b> replays finished games. <b>Play the agent</b> (human mode) lets you take the other side, while the agent is traced and graded in the same way.</p>`,
-  },
-  {
-    title: "Reading the board",
-    board: { ply: 3, coords: true, emph: ["f3"] },
-    note: "After 1. e4 e5 2. Nf3. Yellow marks the last move. Hover a square to see its name.",
-    html: () => `
-      <p>Columns are the <b>files</b>, <b>a–h</b>, left to right. Rows are the <b>ranks</b>, <b>1–8</b>, bottom to top. The small labels sit along the left edge and the bottom, and White starts at the bottom.</p>
-      <p>A square’s name is its file then its rank. The ringed square is <b>f3</b>.</p>
-      <p>Moves are written in short notation: <code>Nf3</code> means a knight moved to f3. <code>N</code> is knight, <code>B</code> bishop, <code>R</code> rook, <code>Q</code> queen, <code>K</code> king, and no letter means a pawn. An <code>x</code> is a capture, and <code>O-O</code> is castling.</p>
-      <p class="muted">When the agent plays Black, the board is flipped so its side is at the bottom.</p>`,
-  },
-  {
-    title: "One move, one trace",
-    board: { ply: 14 },
-    note: "The agent is about to be asked for its 8th move.",
-    html: () => `
-      <p>Each time the agent moves, one trace is recorded. This is its 8th move in the sample.</p>
-      <ul class="tree" aria-label="Trace for move 8">
-        <li><span class="n">chess.move</span> <span class="t">root · 7.9 s</span><span class="w">The whole move: ply, FEN, legal-move count, and later the grade.</span>
-          <ul>
-            <li><span class="n">invoke_agent chess-agent</span> <span class="t">6.8 s</span><span class="w">The decision. Its duration is the latency.</span>
-              <ul>
-                <li><span class="n">chat sample-model</span> <span class="t">2.1 s</span><span class="w">One model call: tokens in and out, finish reason.</span></li>
-                <li><span class="n">execute_tool legal_moves</span> <span class="t">3 ms</span><span class="w">The model asked for a tool.</span></li>
-                <li><span class="n">chat sample-model</span> <span class="t">2.4 s</span></li>
-                <li class="err"><span class="n">chess.validate_move</span> <span class="t">illegal_move</span><span class="w">The model proposed <code>Nxg6</code>, which is not legal here.</span></li>
-                <li><span class="n">chat sample-model</span> <span class="t">2.3 s</span><span class="w">The retry.</span></li>
-                <li><span class="n">chess.validate_move</span> <span class="t">legal</span><span class="w">Candidate <code>Nxg5</code> is legal, so it is played.</span></li>
-              </ul>
-            </li>
-            <li><span class="n">chess.evaluate</span> <span class="t">1.1 s</span><span class="w">Stockfish’s grade. A sibling of the decision, so its time is not in the latency.</span></li>
-          </ul>
-        </li>
-      </ul>
-      <p class="muted">The <code>chat</code>, <code>invoke_agent</code> and <code>execute_tool</code> spans use the OpenTelemetry GenAI conventions (<code>gen_ai.*</code>). Names starting <code>chess.</code> and <code>gambit.</code> are this project’s own. Timings in this sample are invented.</p>`,
-  },
-  {
-    title: "The numbers on a move",
-    board: { ply: 14 },
-    note: "Same position as the last step. Orange chips mark retries and extra calls.",
-    html: () => {
-      const a3 = agentMove(3), a8 = agentMove(8);
-      return `
-      <p>The replay turns each trace into a few numbers. Compare an early move with the 8th:</p>
-      <div class="rowlabel">Move 3</div>${chips(a3)}
-      <div class="rowlabel">Move 8</div>${chips(a8)}
-      <dl class="keys">
-        <dt>latency</dt><dd>How long the decision took, the <code>invoke_agent</code> duration.</dd>
-        <dt>chat / tool calls</dt><dd>Model calls and tool calls in one decision: <code>gambit.chat_calls</code>, <code>gambit.tool_calls</code>.</dd>
-        <dt>in / out tok</dt><dd>Tokens summed over every call: <code>gen_ai.usage.input_tokens</code>, <code>gen_ai.usage.output_tokens</code>.</dd>
-        <dt>illegal tries</dt><dd>Moves proposed that were not legal: <code>chess.illegal_attempts</code>. After three failed retries the agent plays a random legal move and sets <code>chess.fallback</code>.</dd>
-      </dl>`;
-    },
-  },
-  {
-    title: "How a blunder is graded",
-    board: { ply: 15, blunder: true, best: ["g3"] },
-    note: "Red is the move that was played. The green ring is where Stockfish would have gone: Bg3.",
-    html: () => {
-      const a = agentMove(8);
-      return `
-      <p>After the move, Stockfish scores the position before and after, at a fixed depth. The grade is how much the <b>chance of winning</b> dropped.</p>
-      <div class="grades">
-        <div><span class="cls" style="background:var(--best)">best</span><span class="muted">matched Stockfish’s top move</span></div>
-        <div><span class="cls" style="background:var(--good)">good</span><span class="muted">under 5 points lost</span></div>
-        <div><span class="cls" style="background:var(--inaccuracy)">inaccuracy</span><span class="muted">5 points or more</span></div>
-        <div><span class="cls" style="background:var(--mistake)">mistake</span><span class="muted">10 points or more</span></div>
-        <div><span class="cls" style="background:var(--blunder)">blunder</span><span class="muted">15 points or more</span></div>
-      </div>
-      <p><b>Move 8, Nxg5:</b> the evaluation went from ${fmtCP(a.eval_before_cp)} to ${fmtCP(a.eval_after_cp)} and the chance of winning dropped about ${(a.win_chance_drop * 50).toFixed(0)} points. That is a <span class="cls" style="background:var(--blunder)">blunder</span>. The knight takes a pawn and is then captured by the h-pawn (<code>hxg5</code>).</p>
-      <p class="muted">The grade is stored on the trace as <code>chess.move.class</code>, with the evaluation next to it, and it is also sent as a <code>gen_ai.evaluation.result</code> event.</p>`;
-    },
-  },
-  {
-    title: "Predicting a blunder from telemetry",
-    board: { ply: 14 },
-    note: "The agent is about to be asked for move 8.",
-    html: () => {
-      const a = agentMove(8);
-      return `
-      <p>The grade only exists <i>after</i> the move. The talk asks whether the traces give a warning earlier. A small model scores the risk of a blunder from trace features such as latency, tokens, retries and tool calls:</p>
-      <ul>
-        <li><b style="color:var(--risk)">Forecast</b> uses the position and the traces of the <i>previous</i> moves only. It can warn before the agent is even asked.</li>
-        <li><b style="color:var(--risk2)">At-move</b> also sees this move’s own trace, so it can veto a move before it is played.</li>
-      </ul>
-      ${timeline()}
-      <div class="legend"><span style="color:var(--risk)">Forecast</span><span style="color:var(--risk2)">At-move</span><span style="color:var(--muted)">Alert threshold</span></div>
-      <div class="callout alert"><b>Incoming: agent’s move 8</b><div style="font-size:20px;font-weight:700;margin-top:4px;color:var(--blunder)">${(a.risk.forecast * 100).toFixed(0)}% risk · warning before it is requested</div></div>
-      <p class="muted" style="margin-top:10px">These risk numbers are invented for the sample. They show what the replay draws; they are not a result.</p>`;
-    },
-  },
-  {
-    title: "Try it yourself",
-    board: { ply: 16 },
-    note: "The sample game after 8… hxg5.",
-    html: () => `
-      <p>Now try the real thing:</p>
-      <div class="ctas">
-        <a class="btn primary" href="index.html">Recorded games ▸</a>
-        <a class="btn ${live ? "primary" : "off"}" href="live.html" ${live ? "" : 'aria-disabled="true" tabindex="-1"'}>Play the agent ▸</a>
-      </div>
-      <p class="muted">${live ? "Human mode is on here: you play one side and the agent plays the other." : "Human mode is off on this server. Start it with <code>gambit serve --live</code> to play the agent."}</p>
-      <ul>
-        <li>In a replay, press <kbd>b</kbd> to jump to the next blunder, or click a dot on the timeline.</li>
-        <li>Step with <kbd>←</kbd> <kbd>→</kbd> and watch the risk bars before each agent move.</li>
-        <li><b>Open trace ↗</b> jumps from a move into its full trace.</li>
-      </ul>`,
-  },
-];
-
-let step = 0;
+// ---- panel ----
+function lessonTools(s) {
+  const id = lessonId(s, L.ex), pos = LESSONS[id], u = T().ui, txt = T().steps[s.id];
+  let h = "";
+  if (s.examples) {
+    h += `<div class="exbtns" role="group">${s.examples.map((e, i) => `<button type="button" data-ex="${i}" aria-pressed="${i === L.ex}">${esc(txt.examples[e])}</button>`).join("")}</div>`;
+  }
+  if (s.moves !== false) {
+    const all = Object.values(pos.moves).flat();
+    const key = [`<span><i class="k-move"></i>${u.legendMove}</span>`];
+    if (all.some(m => m.capture)) key.push(`<span><i class="k-cap"></i>${u.legendCapture}</span>`);
+    if (all.some(m => m.kind !== "move" && !m.capture)) key.push(`<span><i class="k-sp"></i>${u.legendSpecial}</span>`);
+    if (pos.danger) key.push(`<span><i class="k-x">✕</i>${u.legendDanger}</span>`);
+    if (pos.check) key.push(`<span><i class="k-chk"></i>${u.legendCheck}</span>`);
+    h += `<div class="key">${key.join("")}</div>`;
+    if (L.promo) {
+      h += `<div class="promo"><span>${u.promoteTo}</span>${["q", "r", "b", "n"].map(p => `<button type="button" data-promo="${p}">${GLYPH[p]}︎ ${esc(pieceName(p).split(" (")[0].replace(/^(White|Black|白の|黒の) ?/i, ""))}</button>`).join("")}</div>`;
+    }
+    h += `<div><button type="button" id="reset">${u.reset}</button></div>`;
+  }
+  return h ? `<div class="lessontools">${h}</div>` : "";
+}
 
 function render() {
-  const s = STEPS[step];
-  renderBoard(s.board);
-  $("#boardNote").textContent = s.note || "";
-  const dots = STEPS.map((_, i) => `<button data-i="${i}" aria-label="Step ${i + 1}: ${esc(STEPS[i].title)}" ${i === step ? 'aria-current="step"' : ""}></button>`).join("");
-  $("#panel").innerHTML = `<div class="stepno">Step ${step + 1} of ${STEPS.length}</div><h2>${esc(s.title)}</h2>${s.html()}
-    <div class="stepnav"><button id="back" ${step === 0 ? "disabled" : ""}>◀ Back</button><div class="dots">${dots}</div>
-    <button id="next" class="primary" ${step === STEPS.length - 1 ? "disabled" : ""}>Next ▶</button></div>`;
-  $("#back").onclick = () => go(step - 1);
-  $("#next").onclick = () => go(step + 1);
-  document.querySelectorAll(".dots button").forEach(b => b.onclick = () => go(+b.dataset.i));
-  const u = new URL(location); u.searchParams.set("step", step + 1); history.replaceState(null, "", u);
+  const s = stepNow(), u = T().ui, txt = T().steps[s.id];
+  const idx = Core.flatIndex(route, COUNTS), total = COUNTS[1] + COUNTS[2];
+  if (!L) L = newLesson(0);
+  renderBoard();
+  $("#boardNote").textContent = L.msg || txt.note || "";
+  const ctx = { ui: u, p: (ch) => pieceLabel(route.lang, ch), chips, timeline, fmtCP, live, a3: agentMove(3), a8: agentMove(8) };
+  const dots = PARTS[route.part].map((st, i) => `<button type="button" data-i="${i + 1}" aria-label="${esc(fmt(u.stepLabel, { i: i + 1, title: T().steps[st.id].title }))}" ${i + 1 === route.step ? 'aria-current="step"' : ""}></button>`).join("");
+  const tabs = [1, 2].map(p => `<button type="button" data-goto="part${p}" ${p === route.part ? 'aria-current="true"' : ""}>${esc(u["part" + p])}</button>`).join("");
+  const skip = route.part === 2 ? `<p class="muted" style="margin:10px 0 0"><button type="button" class="linkbtn" data-goto="part1">${u.backToPart1}</button></p>` : "";
+  const atEnd1 = route.part === 1 && route.step === COUNTS[1];
+  $("#panel").innerHTML = `<div class="parts" role="group" aria-label="${esc(u.parts)}">${tabs}</div>
+    <div class="stepno">${fmt(u.stepOf, { i: route.step, n: COUNTS[route.part] })} · ${esc(u["part" + route.part + "Short"])}</div><h2>${esc(txt.title)}</h2>${txt.body(ctx)}
+    ${s.id === "board" || s.moves === false ? "" : ""}${PARTS[route.part][route.step - 1].pos || s.examples ? lessonTools(s) : ""}
+    <div class="stepnav"><button type="button" id="back" ${idx === 0 ? "disabled" : ""}>${u.back}</button>
+    <button type="button" id="next" class="primary" ${idx === total - 1 ? "disabled" : ""}>${atEnd1 ? u.startPart2 : u.next}</button>
+    <div class="dots">${dots}</div></div>${skip}`;
+  $("#back").onclick = () => go(idx - 1);
+  $("#next").onclick = () => go(idx + 1);
+  document.querySelectorAll(".dots button").forEach(b => b.onclick = () => goRoute({ ...route, step: +b.dataset.i }));
+  chrome();
+  syncURL();
 }
 
-function go(n) { step = Math.max(0, Math.min(STEPS.length - 1, n)); render(); }
+// Everything outside the panel: header words, language buttons, the page's own language and title.
+function chrome() {
+  const u = T().ui;
+  document.documentElement.lang = route.lang;
+  document.title = "Observability Gambit · " + (route.lang === "ja" ? "チュートリアル" : "tutorial");
+  $("#h1t").textContent = u.title; $("#h1s").textContent = u.sub;
+  $("#tabRec").textContent = u.tabRecorded; $("#liveTab").textContent = u.tabLive; $("#tabTut").textContent = u.tabTutorial;
+  $("#liveTab").hidden = !live;
+  const b = $("#badge"); b.textContent = u.badge; b.title = u.badgeTitle; b.hidden = route.part !== 2;
+  $("#keyhint").textContent = u.keyhint;
+  $("#langs").setAttribute("aria-label", u.language);
+  document.querySelectorAll("#langs button").forEach(x => x.setAttribute("aria-pressed", String(x.dataset.lang === route.lang)));
+}
+
+function syncURL() {
+  try { history.replaceState(null, "", Core.routeSearch(route, location.search)); } catch (e) { /* e.g. a sandboxed frame */ }
+}
+
+function goRoute(r) {
+  const same = r.part === route.part && r.step === route.step;
+  route = { ...route, part: r.part, step: Math.max(1, Math.min(COUNTS[r.part], r.step)) };
+  if (!same) L = null;
+  render();
+}
+function go(i) { goRoute({ ...Core.fromFlat(i, COUNTS) }); window.scrollTo?.({ top: 0 }); }
+
+function setLang(lang) {
+  if (!Core.LANGS.includes(lang)) return;
+  route = { ...route, lang };
+  Core.saveLang(window.localStorage, lang);
+  if (L) L.msg = "";
+  render();
+}
+
+// ---- lesson clicks ----
+function onSquare(sq) {
+  const s = stepNow(), id = lessonId(s, L.ex), u = T().ui;
+  if (!id) { L.msg = fmt(u.sqName, { sq, what: (() => { const c = Core.pieceAt(fenAt(s.board.ply), sq); return c ? pieceName(c) : u.empty; })() }); $("#boardNote").textContent = L.msg; return; }
+  const pos = LESSONS[id];
+  if (L.after || L.promo) { if (L.after) { L = newLesson(L.ex); } else return; }
+  else if (L.sel && s.moves !== false) {
+    const m = Core.moveTo(pos, L.sel, sq);
+    if (m) { play(pos, L.sel, m); return; }
+  }
+  const ch = Core.pieceAt(pos.fen, sq);
+  const sel = s.moves !== false ? Core.selection(pos, sq) : { kind: "none" };
+  L.sel = ch && sel.kind === "piece" && L.sel !== sq ? sq : null;
+  L.msg = selMessage(pos, sq);
+  render();
+}
+
+function play(pos, from, m) {
+  const u = T().ui;
+  if (m.promo) { L.promo = { from, m }; L.msg = ""; render(); return; }
+  L.after = Core.resultFEN(m); L.last = [from, m.to]; L.sel = null;
+  L.msg = fmt(m.kind === "castle" ? u.playedCastle : m.kind === "enpassant" ? u.playedEp : u.played, { from, to: m.to }) + " " + u.playedHint;
+  render();
+}
+
+document.addEventListener("click", (e) => {
+  const sq = e.target.closest("#board [data-sq]");
+  if (sq) return onSquare(sq.dataset.sq);
+  const g = e.target.closest("[data-goto]");
+  if (g) return goRoute({ part: g.dataset.goto === "part2" ? 2 : 1, step: 1 });
+  const ex = e.target.closest("[data-ex]");
+  if (ex) { L = newLesson(+ex.dataset.ex); return render(); }
+  const pr = e.target.closest("[data-promo]");
+  if (pr && L && L.promo) {
+    const { from, m } = L.promo, u = T().ui;
+    L.after = Core.resultFEN(m, pr.dataset.promo); L.last = [from, m.to]; L.sel = null; L.promo = null;
+    L.msg = fmt(u.playedPromo, { from, to: m.to, piece: pieceName(pr.dataset.promo.toUpperCase()).replace(/^(White |白の)/, "") }) + " " + u.playedHint;
+    return render();
+  }
+  if (e.target.closest("#reset")) { L = newLesson(L.ex); return render(); }
+  const lg = e.target.closest("#langs button");
+  if (lg) setLang(lg.dataset.lang);
+});
 
 document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === "ArrowRight") go(step + 1);
-  else if (e.key === "ArrowLeft") go(step - 1);
+  const sq = e.target.closest && e.target.closest("#board [data-sq]");
+  if (sq && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); return onSquare(sq.dataset.sq); }
+  if (e.key === "ArrowRight") go(Core.flatIndex(route, COUNTS) + 1);
+  else if (e.key === "ArrowLeft") go(Core.flatIndex(route, COUNTS) - 1);
 });
 
 async function init() {
-  const q = Number(new URLSearchParams(location.search).get("step"));
-  if (q >= 1 && q <= STEPS.length) step = q - 1;
+  let stored = null;
+  try { stored = Core.loadLang(window.localStorage); } catch (e) { stored = null; }
+  route = Core.parseRoute(location.search, COUNTS, stored);
   render();
-  // Only the "Play the agent" tab and the last step depend on a server; the rest is static.
+  // Only the "Play the agent" tab and a link in Part 2 depend on a server; the rest is static.
   try {
     const cfg = await (await fetch("api/config")).json();
     live = cfg.live || null;
   } catch (e) { live = null; }
-  $("#liveTab").hidden = !live;
   render();
 }
 init();
