@@ -48,9 +48,6 @@
   .sq.hint::before { content: ""; position: absolute; inset: 3px; border: 4px solid var(--accent); border-radius: 4px; z-index: 2; animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .25; } }
   @media (prefers-reduced-motion: reduce) { .sq.hint::before { animation: none; } }
-  .pc { position: relative; z-index: 1; line-height: 1; }
-  .pc.w { color: #fff; text-shadow: 0 0 2px #000, 0 0 2px #000, 0 1px 3px #000c; }
-  .pc.b { color: #111; text-shadow: 0 0 2px #fff6; }
   .coord { position: absolute; font-size: 11px; color: #0007; left: 3px; top: 1px; font-weight: 600; }
   .coord.file { left: auto; top: auto; right: 3px; bottom: 1px; }
   #board.locked .sq { cursor: default; }
@@ -137,6 +134,8 @@
   #conn[hidden] { display: none; }
   kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; color: var(--muted); }
 </style>
+<link rel="stylesheet" href="og.css">
+<script src="og.js"></script>
 </head>
 <body>
 <header>
@@ -156,7 +155,7 @@
     <div id="board" aria-label="Chess board" class="locked"><div id="promo" hidden></div></div>
     <div id="tip" class="tip" aria-live="polite"></div>
     <div class="pkey" aria-label="What the pieces are called">
-      <span><b>♚</b>King</span><span><b>♛</b>Queen</span><span><b>♜</b>Rook</span><span><b>♝</b>Bishop</span><span><b>♞</b>Knight</span><span><b>♟</b>Pawn</span>
+      <span><b><img src="pieces/wK.svg" alt="" width="26" height="26"></b>King</span><span><b><img src="pieces/wQ.svg" alt="" width="26" height="26"></b>Queen</span><span><b><img src="pieces/wR.svg" alt="" width="26" height="26"></b>Rook</span><span><b><img src="pieces/wB.svg" alt="" width="26" height="26"></b>Bishop</span><span><b><img src="pieces/wN.svg" alt="" width="26" height="26"></b>Knight</span><span><b><img src="pieces/wP.svg" alt="" width="26" height="26"></b>Pawn</span>
     </div>
     <div id="status" class="status" role="status" aria-live="polite"></div>
     <div id="coach" class="coach" aria-live="polite" hidden></div>
@@ -186,7 +185,6 @@
 
 <script>
 const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
-const GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 const CLASS_COLOR = { best: "var(--best)", good: "var(--good)", inaccuracy: "var(--inaccuracy)", mistake: "var(--mistake)", blunder: "var(--blunder)" };
 const EVENTS = ["game_started", "human_turn", "human_moved", "human_graded", "agent_thinking", "agent_progress", "agent_moved", "agent_graded", "coach_thinking", "coach_comment", "coach_unavailable", "game_over", "game_saved", "notice", "error"];
 // What each grade means, for someone who has never played chess.
@@ -208,11 +206,11 @@ const METHOD_TEXT = {
 const gradeTitle = (cls) => GRADE_INFO[cls] ? `${GRADE_INFO[cls][0]}: ${GRADE_INFO[cls][1]}` : "";
 // "Nh3" -> "n", "exd5" -> "p", "O-O" -> "k": the piece a move in notation belongs to.
 const sanPiece = (san) => /^O-O/.test(san) ? "k" : /^[KQRBN]/.test(san) ? san[0].toLowerCase() : "p";
-const sanGlyph = (san) => GLYPH[sanPiece(san)];
+const sanGlyph = (san) => `<span class="pg">${OG.img("w", sanPiece(san), "pg-img")}</span>`;
 // A move as markup: piece symbol + notation, which shows its plain-language reading and squares on hover, focus or tap.
 function mvHTML(san, ex, extra) {
   const a = ex ? ` data-from="${esc(ex.from)}" data-to="${esc(ex.to)}" data-text="${esc(ex.text)}" title="${esc(ex.text)}"` : "";
-  return `<span class="mv"${a}${extra || ""}><span class="pg">${sanGlyph(san)}︎</span>${esc(san)}</span>`;
+  return `<span class="mv"${a}${extra || ""}>${sanGlyph(san)}${esc(san)}</span>`;
 }
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -396,6 +394,7 @@ function renderBoard() {
   const rows = S.fen.split(" ")[0].split("/");
   const lastSq = S.last ? [S.last.slice(0, 2), S.last.slice(2, 4)] : [];
   const targets = S.sel ? (S.legal[S.sel] || []).map(u => u.slice(2, 4)) : [];
+  const checkSq = S.plies.length ? OG.checkSquare(S.fen, S.plies[S.plies.length - 1].san) : null;
   const hint = S.myTurn && S.hint ? [S.hint.slice(0, 2), S.hint.slice(2, 4)] : [];
   const html = [];
   for (let vr = 0; vr < 8; vr++) {
@@ -409,11 +408,13 @@ function renderBoard() {
       if (S.sel === sq) cls.push("sel");
       if (targets.includes(sq)) cls.push("target", c !== "." ? "cap" : "x");
       if (hint.includes(sq)) cls.push("hint");
+      if (sq === checkSq) cls.push("check");
       if (S.myTurn && isMine(c) && S.legal[sq]) cls.push("mine", "can");
       let inner = "";
       if (vf === 0) inner += `<span class="coord">${8 - r}</span>`;
       if (vr === 7) inner += `<span class="coord file">${"abcdefgh"[f]}</span>`;
-      if (c !== ".") inner += `<span class="pc ${c === c.toUpperCase() ? "w" : "b"}">${GLYPH[c.toLowerCase()]}︎</span>`;
+      if (c !== ".") inner += OG.pc(c);
+      if (cls.includes("check")) inner += OG.tag("CHECK", "top");
       const label = c === "." ? sq : `${c === c.toUpperCase() ? "White" : "Black"} ${PIECE_NAME[c.toLowerCase()].toLowerCase()} on ${sq}`;
       html.push(`<div class="${cls.join(" ")}" data-sq="${sq}" role="button" aria-label="${label}"${c === "." ? "" : ` title="${label}"`}>${inner}</div>`);
     }
@@ -488,7 +489,7 @@ function clickSquare(sq) {
 function askPromotion(from, to, moves) {
   const p = $("#promo");
   const white = S.humanColor === "white";
-  p.innerHTML = moves.map(u => `<button data-u="${u}" aria-label="Promote to a ${PIECE_NAME[u[4]].toLowerCase()}"><span class="pc ${white ? "w" : "b"}">${GLYPH[u[4]]}</span><span class="pn">${PIECE_NAME[u[4]]}</span></button>`).join("");
+  p.innerHTML = moves.map(u => `<button data-u="${u}" aria-label="Promote to a ${PIECE_NAME[u[4]].toLowerCase()}">${OG.pc(white ? u[4].toUpperCase() : u[4])}<span class="pn">${PIECE_NAME[u[4]]}</span></button>`).join("");
   p.hidden = false;
   p.querySelectorAll("button").forEach(b => b.onclick = (e) => { e.stopPropagation(); p.hidden = true; send(b.dataset.u); });
 }
@@ -577,7 +578,7 @@ function renderPanel() {
   }
   const g = a.grade;
   let h = `<div class="movehead"><div class="san">${a.move_number}${a.color === "black" ? "…" : "."} ${mvHTML(a.san, a.explain)}</div>
-    ${g ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
+    ${g ? `<span class="cls" data-g="${g.class}" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(g.class)}</span>` : `<span class="cls pending">grading…</span>`}
     <span class="who">agent · ${esc(S.model || live.info.model)}</span><span style="margin-left:auto" id="traceSlot">${traceSlot(ply)}</span></div>`;
   if (a.timed_out) h += `<div class="callout bad"><b>Timed out.</b> The agent did not answer within ${(S.timeoutMS / 1000).toFixed(0)}s, so a random legal move was played. The trace is flagged <code>error.type=timeout</code>.</div>`;
   else if (a.fallback) h += `<div class="callout"><b>Fallback move.</b> The agent never produced a legal move, so a random one was played.</div>`;
@@ -611,7 +612,7 @@ function renderMoves() {
       const sel = (pl.by === "agent" ? (S.picked ?? lastAgentPly()) === pl.ply && !S.thinking : coachPly() === pl.ply) ? "sel" : "";
       const ex = pl.explain;
       const a = ex ? ` data-from="${esc(ex.from)}" data-to="${esc(ex.to)}" data-text="${esc(ex.text)}" title="${esc(ex.text)}" aria-label="${esc(ex.text)}"` : "";
-      return `<button class="${pl.by} ${sel}" data-ply="${pl.ply}" data-by="${pl.by}"${a}>${dot}<span class="pg">${sanGlyph(pl.san)}︎</span>${esc(pl.san)}</button>`;
+      return `<button class="${pl.by} ${sel}" data-ply="${pl.ply}" data-by="${pl.by}"${a}>${dot}${sanGlyph(pl.san)}${esc(pl.san)}</button>`;
     };
     rows.push(`<span class="n">${i / 2 + 1}.</span>${cell(S.plies[i])}${cell(S.plies[i + 1])}`);
   }
@@ -629,7 +630,7 @@ const coachPly = () => S.coachPicked ?? S.coachPly;
 function betterMoveHTML(g, whose) {
   const c = g.coach, lost = Math.round(g.win_pct_lost || 0);
   let h = "";
-  if (c) h += `<span class="better">A better move was <b style="color:var(--text)" data-from="${esc(c.best.from)}" data-to="${esc(c.best.to)}" data-text="${esc(c.best.text)}" title="${esc(c.best.text)}" tabindex="0">${sanGlyph(c.best_san)}︎ ${esc(c.best_san)}</b> (${esc(c.best.text.replace(/\. .*$/, ""))}).</span> `;
+  if (c) h += `<span class="better">A better move was <b style="color:var(--text)" data-from="${esc(c.best.from)}" data-to="${esc(c.best.to)}" data-text="${esc(c.best.text)}" title="${esc(c.best.text)}" tabindex="0">${sanGlyph(c.best_san)}${esc(c.best_san)}</b> (${esc(c.best.text.replace(/\. .*$/, ""))}).</span> `;
   if (c && c.advice) h += `<span style="color:var(--text)">${esc(c.advice)}</span> `;
   h += `<span class="cost" style="color:var(--text)">${whose} move cost about ${lost < 1 ? "less than 1" : lost}% of ${whose === "Your" ? "your" : "its"} winning chance.</span>`;
   return h;
@@ -643,7 +644,7 @@ function renderCoach() {
   el.style.borderLeftColor = ok ? CLASS_COLOR[g.class] : "var(--muted)";
   const n = Math.ceil(ply / 2);
   let html = `<div class="head"><span class="title">Your move ${n}</span><span class="what">${mvHTML(h.san, h.explain)}</span>
-    ${ok ? `<span class="cls" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(GRADE_INFO[g.class][0])}</span>` : g ? "" : `<span class="cls pending">grading…</span>`}</div>`;
+    ${ok ? `<span class="cls" data-g="${g.class}" style="background:${CLASS_COLOR[g.class]}" title="${esc(gradeTitle(g.class))}">${esc(GRADE_INFO[g.class][0])}</span>` : g ? "" : `<span class="cls pending">grading…</span>`}</div>`;
   if (h.explain) html += `<p>${esc(h.explain.text)}.</p>`;
   if (ok) {
     html += `<p class="gradeNote">${esc(GRADE_INFO[g.class][1])}</p>`;
