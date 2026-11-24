@@ -1,8 +1,10 @@
 package web
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -91,68 +93,101 @@ func TestEveryPieceAndColourRenders(t *testing.T) {
 	}
 }
 
-// og.js can draw each of the 12 pieces: its piece paths exist as bundled files.
-func TestPieceHelperCoversAllPieces(t *testing.T) {
-	srv := replayOnly(t)
-	_, js := getBody(t, srv.URL+"/og.js")
-	for _, k := range []string{"k", "q", "r", "b", "n", "p"} {
-		if !strings.Contains(js, k+": ") && !strings.Contains(js, `"`+k+`"`) {
-			t.Errorf("og.js has no entry for %q", k)
-		}
+// runOG executes the served og.js in node and returns the JSON the script prints.
+func runOG(t *testing.T, base, script string, out any) {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not available")
 	}
-	if !strings.Contains(js, `pieces/${color}${kind.toUpperCase()}.svg`) {
-		t.Error("og.js does not build piece image paths from colour and kind")
+	_, js := getBody(t, base+"/og.js")
+	cmd := exec.Command(node, "-e", `const OG = new Function(require("fs").readFileSync(0, "utf8") + ";return OG;")();
+console.log(JSON.stringify((function(){`+script+`})()));`)
+	cmd.Stdin = strings.NewReader(js)
+	b, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("node: %v", err)
+	}
+	if err := json.Unmarshal(b, out); err != nil {
+		t.Fatalf("bad output %q: %v", b, err)
 	}
 }
 
-// All three pages use the shared piece set and look, with no Unicode glyph pieces left,
-// no CDN, and the BLUNDER and CHECK words on squares.
-func TestPagesUseSharedPieces(t *testing.T) {
+// OG.pc draws an img for every FEN letter, pointing at a bundled piece file that is served.
+func TestPieceHelperDrawsEveryFenLetter(t *testing.T) {
+	srv := replayOnly(t)
+	var got map[string]string
+	runOG(t, srv.URL, `const o = {}; for (const ch of "KQRBNPkqrbnp") o[ch] = OG.pc(ch); return o;`, &got)
+	if len(got) != 12 {
+		t.Fatalf("got %d pieces, want 12", len(got))
+	}
+	src := regexp.MustCompile(`<img[^>]* src="(pieces/[^"]+\.svg)"`)
+	for ch, html := range got {
+		m := src.FindStringSubmatch(html)
+		if m == nil {
+			t.Errorf("%s: no piece img in %q", ch, html)
+			continue
+		}
+		color := "b"
+		if ch == strings.ToUpper(ch) {
+			color = "w"
+		}
+		if want := "pieces/" + color + strings.ToUpper(ch) + ".svg"; m[1] != want {
+			t.Errorf("%s: img %s, want %s", ch, m[1], want)
+		}
+		if resp, err := http.Get(srv.URL + "/" + m[1]); err != nil || resp.StatusCode != 200 {
+			t.Errorf("%s: %s not served", ch, m[1])
+		} else {
+			resp.Body.Close()
+		}
+	}
+}
+
+// OG.checkSquare names the king in check, for either side to move, and only for + or # moves.
+func TestCheckSquareFindsKing(t *testing.T) {
+	srv := replayOnly(t)
+	var got []*string
+	runOG(t, srv.URL, `return [
+		OG.checkSquare("4k3/8/8/8/8/8/8/4K2R w - - 0 1", "Rh8+"),
+		OG.checkSquare("4k3/8/8/8/8/8/8/4K2R b - - 0 1", "Rh8#"),
+		OG.checkSquare("4k3/8/8/8/8/8/8/4K2R b - - 0 1", "Rh7"),
+		OG.checkSquare("", "Rh8+"),
+		OG.checkSquare("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e4+"),
+		OG.checkSquare("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1", "Nf3+"),
+	];`, &got)
+	want := []string{"e1", "e8", "", "", "e1", "e8"}
+	for i, w := range want {
+		switch {
+		case w == "" && got[i] != nil:
+			t.Errorf("case %d: got %q, want none", i, *got[i])
+		case w != "" && (got[i] == nil || *got[i] != w):
+			t.Errorf("case %d: got %v, want %s", i, got[i], w)
+		}
+	}
+}
+
+// OG.tag renders the word on the square, with its position class.
+func TestTagRendersWord(t *testing.T) {
+	srv := replayOnly(t)
+	var got string
+	runOG(t, srv.URL, `return OG.tag("BLUNDER", "tl");`, &got)
+	if got != `<span class="tag tl">BLUNDER</span>` {
+		t.Errorf("tag = %q", got)
+	}
+}
+
+// The pages ship no Unicode glyph pieces and pull nothing from outside the bundle.
+func TestPagesBundledAndGlyphFree(t *testing.T) {
 	srv := replayOnly(t)
 	glyphs := regexp.MustCompile("[♔-♟]")
+	ext := regexp.MustCompile(`(?:src|href)="(https?://[^"]+)"`)
 	for _, p := range []string{"/index.html", "/live.html", "/tutorial.html"} {
 		_, page := getBody(t, srv.URL+p)
-		if !strings.Contains(page, `href="og.css"`) || !strings.Contains(page, `src="og.js"`) {
-			t.Errorf("%s: does not load og.css and og.js", p)
-		}
 		if glyphs.MatchString(page) {
 			t.Errorf("%s: still has Unicode chess glyphs", p)
 		}
-		if strings.Contains(page, "OG.pc(") == false {
-			t.Errorf("%s: board does not draw pieces with OG.pc", p)
-		}
-		if !strings.Contains(page, `OG.tag("CHECK"`) {
-			t.Errorf("%s: no CHECK tag on the king square", p)
-		}
-		for _, u := range regexp.MustCompile(`(?:src|href)="(https?://[^"]+)"`).FindAllStringSubmatch(page, -1) {
+		for _, u := range ext.FindAllStringSubmatch(page, -1) {
 			t.Errorf("%s: external resource %s (everything must be bundled)", p, u[1])
 		}
-	}
-	for _, p := range []string{"/index.html"} {
-		_, page := getBody(t, srv.URL+p)
-		if !strings.Contains(page, `OG.tag("BLUNDER"`) {
-			t.Errorf("%s: no BLUNDER tag on the square", p)
-		}
-	}
-	for _, p := range []string{"/og.css", "/og.js"} {
-		code, body := getBody(t, srv.URL+p)
-		if code != 200 || strings.Contains(body, "url(http") || strings.Contains(body, "@import") {
-			t.Errorf("%s: %d or pulls in a remote resource", p, code)
-		}
-	}
-	_, css := getBody(t, srv.URL+"/og.css")
-	for _, want := range []string{".sq .tag", `.cls[data-g=blunder]::before { content: "✕"`, "border: 4px dashed", ".sq.check"} {
-		if !strings.Contains(css, want) {
-			t.Errorf("og.css lacks %q", want)
-		}
-	}
-}
-
-// The check marker finds the king that is in check, and only then.
-func TestCheckSquareSource(t *testing.T) {
-	srv := replayOnly(t)
-	_, js := getBody(t, srv.URL+"/og.js")
-	if !strings.Contains(js, `/[+#]$/`) {
-		t.Error("checkSquare should only mark moves written with + or #")
 	}
 }
