@@ -349,7 +349,7 @@ flags. All are off by default, so on a laptop nothing changes:
 
 | Flag | What it does |
 |---|---|
-| `--models haiku-5.5,luna-6` | Offer exactly these models; the player picks one per game on the start screen. The first is the default (`--default-model`). Each needs its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and replaces `--agent-model`, `--base-url`, `--provider`. `haiku-5.5` uses the native Anthropic client. |
+| `--models haiku-5.5,luna-6` | Offer exactly these models; the player picks one per game on the start screen. The first is the default (`--default-model`). Each needs its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`) and replaces `--agent-model`, `--base-url`, `--provider`. `haiku-5.5` uses the native Anthropic client and `luna-6` the native OpenAI Responses client (effort `low`), so both show reasoning. |
 | `--exclusive` | A new game while one is running gets HTTP 409 instead of abandoning it. |
 | `--max-games-per-hour`, `--max-games-per-day` | Cap game starts; beyond it HTTP 429 with a `Retry-After` header. |
 | `--idle-timeout` | End a game whose human has not moved for this long. |
