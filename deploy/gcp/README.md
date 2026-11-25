@@ -73,6 +73,18 @@ All set in `docker-compose.prod.yaml` from env vars, so a shared link cannot run
 | `GAMBIT_GAME_TOKEN_BUDGET` | 300000 | the game ends once the agent used this many tokens |
 | `--exclusive` (always on here) | | 409 instead of abandoning a running game |
 
+The two game caps survive reboots and redeploys: the startup script rewrites
+`/etc/gambit/gambit.env` each time, and takes them from instance metadata attributes
+`gambit-max-games-per-hour` and `gambit-max-games-per-day` (plain integers, `0` = no cap).
+An attribute that is not set keeps the default above. Do not edit the env file by hand; set
+the attributes, then re-run the startup script (or reboot):
+
+```sh
+gcloud compute instances add-metadata <vm> --zone <zone> \
+  --metadata=gambit-max-games-per-day=60,gambit-max-games-per-hour=0
+gcloud compute ssh <vm> --zone <zone> -- sudo google_metadata_script_runner startup
+```
+
 Also set a monthly spend cap on both provider accounts (the plan assumes about $50 a month on
 Anthropic): it is the backstop if everything else is wrong. Games on Haiku 5.5 cost about
 $0.04 each (measured in the 200-game run).

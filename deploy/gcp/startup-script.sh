@@ -6,6 +6,10 @@
 #
 #   gambit-domain, gambit-repo, gambit-ref, grafana-cloud-endpoint, grafana-cloud-instance-id
 #
+# Optional attributes (absent means the compose defaults apply):
+#
+#   gambit-max-games-per-hour, gambit-max-games-per-day
+#
 # Secrets are NOT here: fetch-secrets.sh reads them from Secret Manager when the
 # gambit service starts.
 set -euo pipefail
@@ -17,6 +21,10 @@ REPO="$(md gambit-repo)"
 REF="$(md gambit-ref)"
 GC_ENDPOINT="$(md grafana-cloud-endpoint)"
 GC_INSTANCE="$(md grafana-cloud-instance-id)"
+# Optional: empty when the attribute is not set.
+md_opt() { md "$1" 2>/dev/null || true; }
+MAX_PER_HOUR="$(md_opt gambit-max-games-per-hour)"
+MAX_PER_DAY="$(md_opt gambit-max-games-per-day)"
 
 # --- Docker (from Docker's apt repository: compose v2 with `!override` support) ---
 if ! command -v docker >/dev/null 2>&1; then
@@ -57,6 +65,13 @@ GRAFANA_CLOUD_OTLP_ENDPOINT=$GC_ENDPOINT
 GRAFANA_CLOUD_INSTANCE_ID=$GC_INSTANCE
 GAMBIT_RUN=cloud
 ENV
+# Caps are written only when set, so an unset attribute keeps the compose default.
+# They must be plain integers (0 = no cap): the file is read by systemd and compose.
+for pair in "GAMBIT_MAX_GAMES_PER_HOUR=$MAX_PER_HOUR" "GAMBIT_MAX_GAMES_PER_DAY=$MAX_PER_DAY"; do
+  [ -n "${pair#*=}" ] || continue
+  [[ "${pair#*=}" =~ ^[0-9]+$ ]] || { echo "startup: ignoring non-numeric ${pair%%=*}"; continue; }
+  echo "$pair" >>/etc/gambit/gambit.env
+done
 
 # --- the service ---
 install -m 0644 /opt/gambit/deploy/gcp/gambit.service /etc/systemd/system/gambit.service
